@@ -26,7 +26,8 @@ interface IERC20Base {
         uint256 amount
     ) external returns (bool);
 
-    function increaseAllowance(address spender, uint256 addedValue)
-        external
-        returns (bool);
+    function increaseAllowance(
+        address spender,
+        uint256 addedValue
+    ) external returns (bool);
 }

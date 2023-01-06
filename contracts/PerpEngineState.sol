@@ -63,26 +63,23 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         lpBalance.lastCumulativeFundingX18 = lpState.cumulativeFundingPerLpX18;
     }
 
-    function getStateAndBalance(uint32 productId, uint64 subaccountId)
-        public
-        view
-        returns (State memory, Balance memory)
-    {
+    function getStateAndBalance(
+        uint32 productId,
+        uint64 subaccountId
+    ) public view returns (State memory, Balance memory) {
         State memory state = states[productId];
         Balance memory balance = balances[productId][subaccountId];
         _updateBalance(state, balance, 0, 0);
         return (state, balance);
     }
 
-    function getStatesAndBalances(uint32 productId, uint64 subaccountId)
+    function getStatesAndBalances(
+        uint32 productId,
+        uint64 subaccountId
+    )
         public
         view
-        returns (
-            LpState memory,
-            LpBalance memory,
-            State memory,
-            Balance memory
-        )
+        returns (LpState memory, LpBalance memory, State memory, Balance memory)
     {
         LpState memory lpState = lpStates[productId];
         State memory state = states[productId];

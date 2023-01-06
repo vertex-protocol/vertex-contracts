@@ -428,9 +428,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         emit SubmitTransactions();
     }
 
-    function submitTransactions(uint64 idx, bytes[] calldata transactions)
-        external
-    {
+    function submitTransactions(
+        uint64 idx,
+        bytes[] calldata transactions
+    ) external {
         // TODO: if one of these transactions fails this means the sequencer is in an error state
         // we should probably record this, and engage some sort of recovery mode
         require(

@@ -25,11 +25,9 @@ abstract contract ClearinghouseRisk is IClearinghouseState, EndpointGated {
         return groups;
     }
 
-    function getRisk(uint32 productId)
-        public
-        view
-        returns (RiskHelper.Risk memory)
-    {
+    function getRisk(
+        uint32 productId
+    ) public view returns (RiskHelper.Risk memory) {
         RiskStore memory risk = risks[productId];
         return
             RiskHelper.Risk({
@@ -43,11 +41,10 @@ abstract contract ClearinghouseRisk is IClearinghouseState, EndpointGated {
             });
     }
 
-    function getLiqPriceX18(uint32 productId, int256 amountX18)
-        internal
-        view
-        returns (int256)
-    {
+    function getLiqPriceX18(
+        uint32 productId,
+        int256 amountX18
+    ) internal view returns (int256) {
         // we want to use the midpoint of maintenance weight and 1
         RiskHelper.Risk memory risk = getRisk(productId);
 

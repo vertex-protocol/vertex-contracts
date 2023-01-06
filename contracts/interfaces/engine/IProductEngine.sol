@@ -69,9 +69,10 @@ interface IProductEngine is IProductEngineState {
         int256 amountLpX18
     ) external;
 
-    function socializeSubaccount(uint64 subaccountId, int256 insuranceX18)
-        external
-        returns (int256);
+    function socializeSubaccount(
+        uint64 subaccountId,
+        int256 insuranceX18
+    ) external returns (int256);
 
     function decomposeLps(uint64 liquidateeId, uint64 liquidatorId) external;
 

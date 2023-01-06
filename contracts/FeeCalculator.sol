@@ -12,8 +12,8 @@ contract FeeCalculator is Initializable, IFeeCalculator {
     function recordVolume(uint64 subaccount, uint256 quoteVolume) external {}
 
     function getFeeFractionX18(
-        uint64, /* subaccountId */
-        uint32, /* productId */
+        uint64 /* subaccountId */,
+        uint32 /* productId */,
         bool taker
     ) external pure returns (int256) {
         if (taker) {

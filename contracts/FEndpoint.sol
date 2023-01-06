@@ -33,107 +33,81 @@ contract FEndpoint is Endpoint {
     }
 
     // abis for the structs are only generated if we use them in a function
-    function updateTime(UpdateTime calldata p)
-        external
-        pure
-        returns (UpdateTime memory)
-    {
+    function updateTime(
+        UpdateTime calldata p
+    ) external pure returns (UpdateTime memory) {
         return p;
     }
 
-    function updatePrice(UpdatePrice calldata p)
-        external
-        pure
-        returns (UpdatePrice memory)
-    {
+    function updatePrice(
+        UpdatePrice calldata p
+    ) external pure returns (UpdatePrice memory) {
         return p;
     }
 
-    function settlePnl(SettlePnl calldata p)
-        external
-        pure
-        returns (SettlePnl memory)
-    {
+    function settlePnl(
+        SettlePnl calldata p
+    ) external pure returns (SettlePnl memory) {
         return p;
     }
 
-    function matchOrders(MatchOrders calldata p)
-        external
-        pure
-        returns (MatchOrders memory)
-    {
+    function matchOrders(
+        MatchOrders calldata p
+    ) external pure returns (MatchOrders memory) {
         return p;
     }
 
-    function dumpFees(DumpFees calldata p)
-        external
-        pure
-        returns (DumpFees memory)
-    {
+    function dumpFees(
+        DumpFees calldata p
+    ) external pure returns (DumpFees memory) {
         return p;
     }
 
-    function signedOrder(SignedOrder calldata p)
-        external
-        pure
-        returns (SignedOrder memory)
-    {
+    function signedOrder(
+        SignedOrder calldata p
+    ) external pure returns (SignedOrder memory) {
         return p;
     }
 
-    function signedCancellation(SignedCancellation calldata p)
-        external
-        pure
-        returns (SignedCancellation memory)
-    {
+    function signedCancellation(
+        SignedCancellation calldata p
+    ) external pure returns (SignedCancellation memory) {
         return p;
     }
 
-    function unsignedDepositCollateral(DepositCollateral calldata p)
-        external
-        pure
-        returns (DepositCollateral memory)
-    {
+    function unsignedDepositCollateral(
+        DepositCollateral calldata p
+    ) external pure returns (DepositCollateral memory) {
         return p;
     }
 
-    function unsignedDepositInsurance(DepositInsurance calldata p)
-        external
-        pure
-        returns (DepositInsurance memory)
-    {
+    function unsignedDepositInsurance(
+        DepositInsurance calldata p
+    ) external pure returns (DepositInsurance memory) {
         return p;
     }
 
-    function signedLiquidateSubaccount(SignedLiquidateSubaccount calldata p)
-        external
-        pure
-        returns (SignedLiquidateSubaccount memory)
-    {
+    function signedLiquidateSubaccount(
+        SignedLiquidateSubaccount calldata p
+    ) external pure returns (SignedLiquidateSubaccount memory) {
         return p;
     }
 
-    function signedWithdrawCollateral(SignedWithdrawCollateral calldata p)
-        external
-        pure
-        returns (SignedWithdrawCollateral memory)
-    {
+    function signedWithdrawCollateral(
+        SignedWithdrawCollateral calldata p
+    ) external pure returns (SignedWithdrawCollateral memory) {
         return p;
     }
 
-    function signedMintLp(SignedMintLp calldata p)
-        external
-        pure
-        returns (SignedMintLp memory)
-    {
+    function signedMintLp(
+        SignedMintLp calldata p
+    ) external pure returns (SignedMintLp memory) {
         return p;
     }
 
-    function signedBurnLp(SignedBurnLp calldata p)
-        external
-        pure
-        returns (SignedBurnLp memory)
-    {
+    function signedBurnLp(
+        SignedBurnLp calldata p
+    ) external pure returns (SignedBurnLp memory) {
         return p;
     }
 }

@@ -112,9 +112,9 @@ contract PerpEngine is PerpEngineLp {
 
     /// @notice updates internal balances; given tuples of (product, subaccount, delta)
     /// since tuples aren't a thing in solidity, params specify the transpose
-    function applyDeltas(IProductEngine.ProductDelta[] calldata deltas)
-        external
-    {
+    function applyDeltas(
+        IProductEngine.ProductDelta[] calldata deltas
+    ) external {
         // Only a market book can apply deltas
         checkCanApplyDeltas();
 
@@ -177,7 +177,10 @@ contract PerpEngine is PerpEngineLp {
         return totalSettledX18;
     }
 
-    function getSettlementState(uint32 productId, uint64 subaccountId)
+    function getSettlementState(
+        uint32 productId,
+        uint64 subaccountId
+    )
         public
         view
         returns (
@@ -210,10 +213,10 @@ contract PerpEngine is PerpEngineLp {
         );
     }
 
-    function socializeSubaccount(uint64 subaccountId, int256 insuranceX18)
-        external
-        returns (int256)
-    {
+    function socializeSubaccount(
+        uint64 subaccountId,
+        int256 insuranceX18
+    ) external returns (int256) {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
         for (uint256 i = 0; i < productIds.length; ++i) {

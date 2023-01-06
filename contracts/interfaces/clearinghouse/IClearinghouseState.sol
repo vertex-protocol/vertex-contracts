@@ -47,16 +47,14 @@ interface IClearinghouseState {
         returns (IProductEngine.EngineType[] memory);
 
     /// @notice Returns the registered engine address by type
-    function getEngineByType(IProductEngine.EngineType engineType)
-        external
-        view
-        returns (address);
+    function getEngineByType(
+        IProductEngine.EngineType engineType
+    ) external view returns (address);
 
     /// @notice Returns the engine associated with a product ID
-    function getEngineByProduct(uint32 productId)
-        external
-        view
-        returns (address);
+    function getEngineByProduct(
+        uint32 productId
+    ) external view returns (address);
 
     /// @notice Returns the orderbook associated with a product ID
     function getOrderbook(uint32 productId) external view returns (address);
@@ -69,17 +67,16 @@ interface IClearinghouseState {
 
     /// @notice Gets the subaccount ID associated with an address
     /// @notice IDs start at 1; errors if the subaccount does not exist
-    function getSubaccountId(address owner, string memory subaccountName)
-        external
-        view
-        returns (uint64);
+    function getSubaccountId(
+        address owner,
+        string memory subaccountName
+    ) external view returns (uint64);
 
     /// @notice Gets the address associated with a subaccount ID
     /// @notice Null address indicates that the subaccount does not exist
-    function getSubaccountOwner(uint64 subaccountId)
-        external
-        view
-        returns (address);
+    function getSubaccountOwner(
+        uint64 subaccountId
+    ) external view returns (address);
 
     /// @notice Returns health for the subaccount across all engines
     function getHealthX18(
@@ -90,8 +87,7 @@ interface IClearinghouseState {
     /// @notice Returns the amount of insurance remaining in this clearinghouse
     function getInsuranceX18() external view returns (int256);
 
-    function getRisk(uint32 productId)
-        external
-        view
-        returns (RiskHelper.Risk memory);
+    function getRisk(
+        uint32 productId
+    ) external view returns (RiskHelper.Risk memory);
 }

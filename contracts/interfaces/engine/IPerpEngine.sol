@@ -32,12 +32,15 @@ interface IPerpEngine is IProductEngine {
         int256 lastCumulativeFundingX18;
     }
 
-    function getStateAndBalance(uint32 productId, uint64 subaccountId)
-        external
-        view
-        returns (State memory, Balance memory);
+    function getStateAndBalance(
+        uint32 productId,
+        uint64 subaccountId
+    ) external view returns (State memory, Balance memory);
 
-    function getStatesAndBalances(uint32 productId, uint64 subaccountId)
+    function getStatesAndBalances(
+        uint32 productId,
+        uint64 subaccountId
+    )
         external
         view
         returns (
@@ -53,7 +56,10 @@ interface IPerpEngine is IProductEngine {
     /// @notice Emitted during perp settlement
     event SettlePnl(uint64 indexed subaccount, uint32 productId, int256 amount);
 
-    function getSettlementState(uint32 productId, uint64 subaccountId)
+    function getSettlementState(
+        uint32 productId,
+        uint64 subaccountId
+    )
         external
         view
         returns (

@@ -35,11 +35,10 @@ contract FOffchainBook is OffchainBook {
         return (filledAmounts[digest1], filledAmounts[digest2]);
     }
 
-    function getFeeRatesX18(address sender, string memory subaccountName)
-        public
-        view
-        returns (int256 takerFeeRateX18, int256 makerFeeRateX18)
-    {
+    function getFeeRatesX18(
+        address sender,
+        string memory subaccountName
+    ) public view returns (int256 takerFeeRateX18, int256 makerFeeRateX18) {
         uint64 subaccountId = clearinghouse.getSubaccountId(
             sender,
             subaccountName
@@ -57,8 +56,8 @@ contract FOffchainBook is OffchainBook {
     }
 
     function _checkSignature(
-        address, /* subaccountOwner */
-        bytes32, /* digest */
+        address /* subaccountOwner */,
+        bytes32 /* digest */,
         bytes memory /* signature */
     ) internal pure override returns (bool) {
         return true;

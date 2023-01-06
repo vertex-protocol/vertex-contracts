@@ -27,9 +27,10 @@ contract FClearinghouse is Clearinghouse {
         tokenBalances[address(token)] -= amount;
     }
 
-    function createSubaccount(address owner, string calldata subaccountName)
-        external
-    {
+    function createSubaccount(
+        address owner,
+        string calldata subaccountName
+    ) external {
         _loadSubaccount(owner, subaccountName);
     }
 

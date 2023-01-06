@@ -61,11 +61,10 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         });
     }
 
-    function getDigest(IEndpoint.Order memory order, bool isCancellation)
-        public
-        view
-        returns (bytes32)
-    {
+    function getDigest(
+        IEndpoint.Order memory order,
+        bool isCancellation
+    ) public view returns (bytes32) {
         string memory structType = isCancellation
             ? "Cancellation(address sender,string subaccountName,int256 priceX18,int256 amount,uint64 expiration,uint64 nonce)"
             : "Order(address sender,string subaccountName,int256 priceX18,int256 amount,uint64 expiration,uint64 nonce)";
@@ -222,10 +221,9 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         );
     }
 
-    function matchOrderAMM(IEndpoint.MatchOrderAMM calldata txn)
-        external
-        onlyEndpoint
-    {
+    function matchOrderAMM(
+        IEndpoint.MatchOrderAMM calldata txn
+    ) external onlyEndpoint {
         Market memory _market = market;
         bytes32 takerDigest = getDigest(txn.taker.order, false);
         int256 takerAmount = txn.taker.order.amount;
@@ -294,10 +292,9 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         filledAmounts[takerDigest] = takerAmount - txn.taker.order.amount;
     }
 
-    function matchOrders(IEndpoint.MatchOrders calldata txn)
-        external
-        onlyEndpoint
-    {
+    function matchOrders(
+        IEndpoint.MatchOrders calldata txn
+    ) external onlyEndpoint {
         Market memory _market = market;
         IEndpoint.SignedOrder memory taker = txn.taker;
         IEndpoint.SignedOrder memory maker = txn.maker;

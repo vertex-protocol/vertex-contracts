@@ -89,19 +89,15 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         return supportedEngines;
     }
 
-    function getEngineByType(IProductEngine.EngineType engineType)
-        external
-        view
-        returns (address)
-    {
+    function getEngineByType(
+        IProductEngine.EngineType engineType
+    ) external view returns (address) {
         return address(engineByType[engineType]);
     }
 
-    function getEngineByProduct(uint32 productId)
-        external
-        view
-        returns (address)
-    {
+    function getEngineByProduct(
+        uint32 productId
+    ) external view returns (address) {
         return address(productToEngine[productId]);
     }
 
@@ -117,19 +113,16 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         return subaccountCount;
     }
 
-    function getSubaccountId(address owner, string memory name)
-        external
-        view
-        returns (uint64)
-    {
+    function getSubaccountId(
+        address owner,
+        string memory name
+    ) external view returns (uint64) {
         return subaccounts[owner][name];
     }
 
-    function getSubaccountOwner(uint64 subaccountId)
-        external
-        view
-        returns (address)
-    {
+    function getSubaccountOwner(
+        uint64 subaccountId
+    ) external view returns (address) {
         return subaccountOwner[subaccountId];
     }
 
@@ -292,10 +285,10 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
      * Actions
      */
 
-    function addEngine(address engine, IProductEngine.EngineType engineType)
-        external
-        onlyOwner
-    {
+    function addEngine(
+        address engine,
+        IProductEngine.EngineType engineType
+    ) external onlyOwner {
         require(address(engineByType[engineType]) == address(0));
         IProductEngine productEngine = IProductEngine(engine);
         // Register
@@ -368,11 +361,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         token.safeTransferFrom(from, address(this), amount);
     }
 
-    function depositCollateral(IEndpoint.DepositCollateral calldata txn)
-        external
-        virtual
-        onlyEndpoint
-    {
+    function depositCollateral(
+        IEndpoint.DepositCollateral calldata txn
+    ) external virtual onlyEndpoint {
         uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
 
         int256 amountRealized = int256(txn.amount);
@@ -399,11 +390,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
     }
 
     /// @notice control insurance balance, only callable by owner
-    function depositInsurance(IEndpoint.DepositInsurance calldata txn)
-        external
-        virtual
-        onlyEndpoint
-    {
+    function depositInsurance(
+        IEndpoint.DepositInsurance calldata txn
+    ) external virtual onlyEndpoint {
         int256 amountX18 = int256(txn.amount);
         insuranceX18 += amountX18.fromInt();
         // facilitate transfer
@@ -422,11 +411,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         token.safeTransfer(to, amount);
     }
 
-    function withdrawCollateral(IEndpoint.WithdrawCollateral calldata txn)
-        external
-        virtual
-        onlyEndpoint
-    {
+    function withdrawCollateral(
+        IEndpoint.WithdrawCollateral calldata txn
+    ) external virtual onlyEndpoint {
         uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
 
         int256 amountRealized = -int256(txn.amount);
@@ -453,11 +440,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         emit ModifyCollateral(amountRealized, subaccountId, txn.productId);
     }
 
-    function mintLp(IEndpoint.MintLp calldata txn)
-        external
-        virtual
-        onlyEndpoint
-    {
+    function mintLp(
+        IEndpoint.MintLp calldata txn
+    ) external virtual onlyEndpoint {
         uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
         productToEngine[txn.productId].mintLp(
             txn.productId,
@@ -469,11 +454,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         require(!_isUnderInitial(subaccountId), ERR_SUBACCT_HEALTH);
     }
 
-    function burnLp(IEndpoint.BurnLp calldata txn)
-        external
-        virtual
-        onlyEndpoint
-    {
+    function burnLp(
+        IEndpoint.BurnLp calldata txn
+    ) external virtual onlyEndpoint {
         uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
         productToEngine[txn.productId].burnLp(
             txn.productId,
@@ -515,10 +498,10 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
      * Internal
      */
 
-    function _loadSubaccount(address from, string calldata name)
-        internal
-        returns (uint64)
-    {
+    function _loadSubaccount(
+        address from,
+        string calldata name
+    ) internal returns (uint64) {
         require(bytes(name).length <= 12, ERR_LONG_NAME);
         if (subaccounts[from][name] == 0) {
             // IDs need to start at 1
@@ -542,11 +525,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
             getHealthX18(subaccountId, IProductEngine.HealthType.INITIAL) < 0;
     }
 
-    function _isUnderMaintenance(uint64 subaccountId)
-        internal
-        view
-        returns (bool)
-    {
+    function _isUnderMaintenance(
+        uint64 subaccountId
+    ) internal view returns (bool) {
         // Weighted maintenance health < 0
         return
             getHealthX18(subaccountId, IProductEngine.HealthType.MAINTENANCE) <
@@ -681,10 +662,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         int256 insuranceCoverX18;
     }
 
-    function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata txn)
-        external
-        onlyEndpoint
-    {
+    function liquidateSubaccount(
+        IEndpoint.LiquidateSubaccount calldata txn
+    ) external onlyEndpoint {
         uint64 liquidatorId = _loadSubaccount(txn.sender, txn.subaccountName);
         require(liquidatorId != txn.liquidateeId, ERR_UNAUTHORIZED);
 

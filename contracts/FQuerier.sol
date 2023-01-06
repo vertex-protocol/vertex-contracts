@@ -126,11 +126,9 @@ contract FQuerier {
             });
     }
 
-    function getSpotProducts(uint32[] memory productIds)
-        public
-        view
-        returns (SpotProduct[] memory spotProducts)
-    {
+    function getSpotProducts(
+        uint32[] memory productIds
+    ) public view returns (SpotProduct[] memory spotProducts) {
         ISpotEngine engine = ISpotEngine(
             clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
         );
@@ -148,11 +146,9 @@ contract FQuerier {
         }
     }
 
-    function getPerpProducts(uint32[] memory productIds)
-        public
-        view
-        returns (PerpProduct[] memory perpProducts)
-    {
+    function getPerpProducts(
+        uint32[] memory productIds
+    ) public view returns (PerpProduct[] memory perpProducts) {
         IPerpEngine engine = IPerpEngine(
             clearinghouse.getEngineByType(IProductEngine.EngineType.PERP)
         );
@@ -231,11 +227,9 @@ contract FQuerier {
         bytes data;
     }
 
-    function _getRevertMsg(bytes memory _returnData)
-        internal
-        pure
-        returns (string memory)
-    {
+    function _getRevertMsg(
+        bytes memory _returnData
+    ) internal pure returns (string memory) {
         // If the _res length is less than 68, then the transaction failed silently (without a revert message)
         if (_returnData.length < 68) return "Transaction reverted silently";
 
@@ -263,11 +257,9 @@ contract FQuerier {
         revert(Base64.encode(abi.encode(this.getSubaccountInfo(subaccountId))));
     }
 
-    function getSubaccountInfo(uint64 subaccountId)
-        external
-        view
-        returns (SubaccountInfo memory)
-    {
+    function getSubaccountInfo(
+        uint64 subaccountId
+    ) external view returns (SubaccountInfo memory) {
         SubaccountInfo memory subaccountInfo;
 
         {
@@ -566,11 +558,10 @@ contract FQuerier {
         return subaccountInfo;
     }
 
-    function getSpotBalances(uint64 subaccountId, uint32[] memory productIds)
-        public
-        view
-        returns (SpotBalance[] memory spotBalances)
-    {
+    function getSpotBalances(
+        uint64 subaccountId,
+        uint32[] memory productIds
+    ) public view returns (SpotBalance[] memory spotBalances) {
         ISpotEngine engine = ISpotEngine(
             clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
         );
@@ -582,11 +573,10 @@ contract FQuerier {
         }
     }
 
-    function getPerpBalances(uint64 subaccountId, uint32[] memory productIds)
-        public
-        view
-        returns (PerpBalance[] memory perpBalances)
-    {
+    function getPerpBalances(
+        uint64 subaccountId,
+        uint32[] memory productIds
+    ) public view returns (PerpBalance[] memory perpBalances) {
         IPerpEngine engine = IPerpEngine(
             clearinghouse.getEngineByType(IProductEngine.EngineType.PERP)
         );
@@ -636,11 +626,10 @@ contract FQuerier {
             });
     }
 
-    function getBookInfo(uint32 productId, IProductEngine engine)
-        public
-        view
-        returns (BookInfo memory bookInfo)
-    {
+    function getBookInfo(
+        uint32 productId,
+        IProductEngine engine
+    ) public view returns (BookInfo memory bookInfo) {
         IOffchainBook book = IOffchainBook(engine.getOrderbook(productId));
         IOffchainBook.Market memory market = book.getMarket();
         return

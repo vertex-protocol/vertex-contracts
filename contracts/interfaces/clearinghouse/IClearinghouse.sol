@@ -12,8 +12,10 @@ interface IClearinghouse is
     IClearinghouseEventEmitter,
     IEndpointGated
 {
-    function addEngine(address engine, IProductEngine.EngineType engineType)
-        external;
+    function addEngine(
+        address engine,
+        IProductEngine.EngineType engineType
+    ) external;
 
     function registerProductForId(
         address book,
@@ -21,18 +23,21 @@ interface IClearinghouse is
         uint32 healthGroup
     ) external returns (uint32);
 
-    function depositCollateral(IEndpoint.DepositCollateral calldata tx)
-        external;
+    function depositCollateral(
+        IEndpoint.DepositCollateral calldata tx
+    ) external;
 
-    function withdrawCollateral(IEndpoint.WithdrawCollateral calldata tx)
-        external;
+    function withdrawCollateral(
+        IEndpoint.WithdrawCollateral calldata tx
+    ) external;
 
     function mintLp(IEndpoint.MintLp calldata tx) external;
 
     function burnLp(IEndpoint.BurnLp calldata tx) external;
 
-    function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata tx)
-        external;
+    function liquidateSubaccount(
+        IEndpoint.LiquidateSubaccount calldata tx
+    ) external;
 
     function depositInsurance(IEndpoint.DepositInsurance calldata tx) external;
 

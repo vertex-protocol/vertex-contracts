@@ -43,10 +43,10 @@ interface IOffchainBook {
         int256 _lpSpreadX18
     ) external;
 
-    function getDigest(IEndpoint.Order memory order, bool isCancellation)
-        external
-        view
-        returns (bytes32);
+    function getDigest(
+        IEndpoint.Order memory order,
+        bool isCancellation
+    ) external view returns (bytes32);
 
     function getMarket() external view returns (Market memory);
 

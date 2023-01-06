@@ -10,8 +10,7 @@ interface IFeeCalculator {
         bool taker
     ) external view returns (int256);
 
-    function getInterestFeeFractionX18(uint32 productId)
-        external
-        view
-        returns (int256);
+    function getInterestFeeFractionX18(
+        uint32 productId
+    ) external view returns (int256);
 }

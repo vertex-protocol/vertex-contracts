@@ -205,8 +205,10 @@ interface IEndpoint {
 
     function setBook(uint32 productId, address book) external;
 
-    function submitTransactions(uint64 idx, bytes[] calldata transactions)
-        external;
+    function submitTransactions(
+        uint64 idx,
+        bytes[] calldata transactions
+    ) external;
 
     function submitSlowModeTransaction(bytes calldata transaction) external;
 

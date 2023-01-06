@@ -159,10 +159,10 @@ contract SpotEngine is SpotEngineLP {
         }
     }
 
-    function socializeSubaccount(uint64 subaccountId, int256 insuranceX18)
-        external
-        returns (int256)
-    {
+    function socializeSubaccount(
+        uint64 subaccountId,
+        int256 insuranceX18
+    ) external returns (int256) {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
         // if the insurance fund still has value we shouldn't socialize

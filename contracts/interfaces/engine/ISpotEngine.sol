@@ -34,12 +34,15 @@ interface ISpotEngine is IProductEngine {
         int256 amountX18;
     }
 
-    function getStateAndBalance(uint32 productId, uint64 subaccountId)
-        external
-        view
-        returns (State memory, Balance memory);
+    function getStateAndBalance(
+        uint32 productId,
+        uint64 subaccountId
+    ) external view returns (State memory, Balance memory);
 
-    function getStatesAndBalances(uint32 productId, uint64 subaccountId)
+    function getStatesAndBalances(
+        uint32 productId,
+        uint64 subaccountId
+    )
         external
         view
         returns (
