@@ -1,0 +1,28 @@
+secrets.json
+.secrets
+.env
+
+node_modules/
+.idea/
+
+# OpenZeppelin
+.openzeppelin/dev-*.json
+.openzeppelin/unknown-*.json
+.openzeppelin/.session
+
+# Hardhat
+cache/
+
+# Typechain
+typechain-types/
+artifacts/
+
+# ABIs
+abis/
+
+# solidity-coverage
+coverage/
+coverage.json
+
+# Husky
+.husky

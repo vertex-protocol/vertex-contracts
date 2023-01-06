@@ -1,0 +1,10 @@
+node_modules/
+.idea/
+
+# Typechain
+typechain-types/
+artifacts/
+
+# solidity-coverage
+coverage/
+coverage.json
