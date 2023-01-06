@@ -1,0 +1,72 @@
+{
+  "name": "vertex-core",
+  "version": "1.0.0",
+  "license": "UNLICENSED",
+  "description": "EVM implementation of Vertex",
+  "scripts": {
+    "prepare": "husky install",
+    "lint": "eslint './**/*.ts' --fix && prettier --write './**/*.{ts,sol}' --loglevel silent && solhint --fix 'contracts/**/*.sol'",
+    "compile": "hardhat compile",
+    "force-compile": "TS_NODE_TRANSPILE_ONLY=1 hardhat clean && TS_NODE_TRANSPILE_ONLY=1 hardhat compile"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "dependencies": {
+    "@chainlink/contracts": "^0.4.1",
+    "@ethersproject/abi": "^5.6.4",
+    "@ethersproject/bignumber": "^5.6.2",
+    "@ethersproject/bytes": "^5.6.1",
+    "@ethersproject/providers": "^5.6.8",
+    "@openzeppelin/contracts": "^4.8.0-rc.2",
+    "@openzeppelin/contracts-upgradeable": "^4.8.0-rc.2",
+    "evm-bn": "^1.1.1",
+    "fs-extra": "^10.1.0",
+    "lodash": "^4.17.21",
+    "mathjs": "^10.6.1",
+    "node-fetch": "2",
+    "prb-math": "^2.4.3",
+    "redis": "^4.3.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-chai-matchers": "^1.0.2",
+    "@nomicfoundation/hardhat-network-helpers": "^1.0.3",
+    "@nomicfoundation/hardhat-toolbox": "^1.0.2",
+    "@nomiclabs/hardhat-ethers": "^2.1.0",
+    "@nomiclabs/hardhat-etherscan": "^3.1.0",
+    "@nomiclabs/hardhat-solhint": "^2.0.1",
+    "@openzeppelin/hardhat-upgrades": "^1.18.1",
+    "@typechain/ethers-v5": "^10.1.0",
+    "@typechain/hardhat": "^6.1.2",
+    "@types/chai": "^4.3.1",
+    "@types/fs-extra": "^9.0.13",
+    "@types/lodash": "^4.14.182",
+    "@types/mocha": "^9.1.1",
+    "@types/node": "^17.0.40",
+    "@types/node-fetch": "^2.6.2",
+    "@typescript-eslint/eslint-plugin": "^5.30.7",
+    "@typescript-eslint/parser": "^5.30.7",
+    "chai": "^4.3.6",
+    "dotenv": "^16.0.1",
+    "eslint": "^8.20.0",
+    "eslint-config-prettier": "^8.5.0",
+    "ethers": "^5.6.9",
+    "hardhat": "^2.10.1",
+    "hardhat-abi-exporter": "^2.9.0",
+    "hardhat-contract-sizer": "^2.5.1",
+    "hardhat-deploy": "^0.11.10",
+    "hardhat-gas-reporter": "^1.0.8",
+    "husky": "^8.0.0",
+    "lint-staged": "^13.0.3",
+    "prettier": "^2.6.2",
+    "prettier-plugin-solidity": "^1.0.0-beta.19",
+    "solhint": "^3.3.7",
+    "solidity-coverage": "^0.7.21",
+    "ts-node": "^10.8.1",
+    "typechain": "^8.1.0",
+    "typescript": "^4.7.3"
+  },
+  "lint-staged": {
+    "*.{ts,sol}": "yarn lint"
+  }
+}
