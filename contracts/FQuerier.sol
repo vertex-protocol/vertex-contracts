@@ -2,19 +2,21 @@
 pragma solidity ^0.8.0;
 
 import "./interfaces/clearinghouse/IClearinghouse.sol";
-import "prb-math/contracts/PRBMathSD59x18.sol";
+import "./interfaces/IOffchainBook.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
-import "./interfaces/IOffchainBook.sol";
-import "./common/Constants.sol";
 import "./interfaces/engine/IProductEngine.sol";
-import "@openzeppelin/contracts/utils/Base64.sol";
+import "./libraries/MathSD21x18.sol";
+import "./libraries/RiskHelper.sol";
+import "./common/Constants.sol";
+import "./Version.sol";
 
 // NOTE: not related to VertexQuerier
 // custom querier contract just for queries with FNode
 // VertexQuerier has some issues with abi generation
-contract FQuerier {
-    using PRBMathSD59x18 for int256;
+contract FQuerier is Version {
+    using MathSD21x18 for int128;
+
     IClearinghouse private clearinghouse;
     IEndpoint private endpoint;
     ISpotEngine private spotEngine;
@@ -48,7 +50,7 @@ contract FQuerier {
     // for config just go to the chain
     struct SpotProduct {
         uint32 productId;
-        int256 oraclePriceX18;
+        int128 oraclePriceX18;
         RiskHelper.Risk risk;
         ISpotEngine.Config config;
         ISpotEngine.State state;
@@ -58,8 +60,7 @@ contract FQuerier {
 
     struct PerpProduct {
         uint32 productId;
-        int256 oraclePriceX18;
-        int256 markPriceX18;
+        int128 oraclePriceX18;
         RiskHelper.Risk risk;
         IPerpEngine.State state;
         IPerpEngine.LpState lpState;
@@ -67,20 +68,21 @@ contract FQuerier {
     }
 
     struct BookInfo {
-        int256 sizeIncrement;
-        int256 priceIncrementX18;
-        int256 collectedFeesX18;
-        int256 lpSpreadX18;
+        int128 sizeIncrement;
+        int128 priceIncrementX18;
+        int128 minSize;
+        int128 collectedFees;
+        int128 lpSpreadX18;
     }
 
     struct HealthInfo {
-        int256 assetsX18;
-        int256 liabilitiesX18;
-        int256 healthX18;
+        int128 assets;
+        int128 liabilities;
+        int128 health;
     }
 
     struct SubaccountInfo {
-        uint64 subaccountId;
+        bytes32 subaccount;
         bool exists;
         HealthInfo[] healths;
         uint32 spotCount;
@@ -105,13 +107,8 @@ contract FQuerier {
         view
         returns (uint32[] memory spotIds, uint32[] memory perpIds)
     {
-        spotIds = ISpotEngine(
-            clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
-        ).getProductIds();
-
-        perpIds = ISpotEngine(
-            clearinghouse.getEngineByType(IProductEngine.EngineType.PERP)
-        ).getProductIds();
+        spotIds = spotEngine.getProductIds();
+        perpIds = perpEngine.getProductIds();
     }
 
     function getAllProducts() public view returns (ProductInfo memory) {
@@ -126,59 +123,44 @@ contract FQuerier {
             });
     }
 
-    function getSpotProducts(
-        uint32[] memory productIds
-    ) public view returns (SpotProduct[] memory spotProducts) {
-        ISpotEngine engine = ISpotEngine(
-            clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
-        );
-
+    function getSpotProducts(uint32[] memory productIds)
+        public
+        view
+        returns (SpotProduct[] memory spotProducts)
+    {
         spotProducts = new SpotProduct[](productIds.length);
 
         for (uint32 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
-            spotProducts[i] = _getSpotProduct(
-                productId,
-                engine,
-                clearinghouse,
-                endpoint
-            );
+            spotProducts[i] = getSpotProduct(productId);
         }
     }
 
-    function getPerpProducts(
-        uint32[] memory productIds
-    ) public view returns (PerpProduct[] memory perpProducts) {
-        IPerpEngine engine = IPerpEngine(
-            clearinghouse.getEngineByType(IProductEngine.EngineType.PERP)
-        );
-
+    function getPerpProducts(uint32[] memory productIds)
+        public
+        view
+        returns (PerpProduct[] memory perpProducts)
+    {
         perpProducts = new PerpProduct[](productIds.length);
 
         for (uint32 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
-            perpProducts[i] = _getPerpProduct(
-                productId,
-                engine,
-                clearinghouse,
-                endpoint
-            );
+            perpProducts[i] = getPerpProduct(productId);
         }
     }
 
-    function _getSpotProduct(
-        uint32 productId,
-        ISpotEngine engine,
-        IClearinghouse clearinghouse,
-        IEndpoint endpoint
-    ) internal view returns (SpotProduct memory spotProduct) {
+    function getSpotProduct(uint32 productId)
+        public
+        view
+        returns (SpotProduct memory)
+    {
         (
             ISpotEngine.LpState memory lpState,
             ,
             ISpotEngine.State memory state,
 
-        ) = engine.getStatesAndBalances(productId, 0);
-        int256 oraclePriceX18 = productId == QUOTE_PRODUCT_ID
+        ) = spotEngine.getStatesAndBalances(productId, 0);
+        int128 oraclePriceX18 = productId == QUOTE_PRODUCT_ID
             ? ONE
             : endpoint.getPriceX18(productId);
         return
@@ -186,80 +168,45 @@ contract FQuerier {
                 productId: productId,
                 oraclePriceX18: oraclePriceX18,
                 risk: clearinghouse.getRisk(productId),
-                config: engine.getConfig(productId),
+                config: spotEngine.getConfig(productId),
                 state: state,
                 lpState: lpState,
                 bookInfo: productId != 0
-                    ? getBookInfo(productId, engine)
-                    : BookInfo(0, 0, 0, 0)
+                    ? getBookInfo(productId, spotEngine)
+                    : BookInfo(0, 0, 0, 0, 0)
             });
     }
 
-    function _getPerpProduct(
-        uint32 productId,
-        IPerpEngine engine,
-        IClearinghouse clearinghouse,
-        IEndpoint endpoint
-    ) internal view returns (PerpProduct memory spotProduct) {
+    function getPerpProduct(uint32 productId)
+        public
+        view
+        returns (PerpProduct memory)
+    {
         (
             IPerpEngine.LpState memory lpState,
             ,
             IPerpEngine.State memory state,
 
-        ) = engine.getStatesAndBalances(productId, 0);
+        ) = perpEngine.getStatesAndBalances(productId, 0);
 
         return
             PerpProduct({
                 productId: productId,
                 oraclePriceX18: endpoint.getPriceX18(productId),
-                markPriceX18: engine.getMarkPrice(productId),
                 risk: clearinghouse.getRisk(productId),
                 state: state,
                 lpState: lpState,
                 bookInfo: productId != 0
-                    ? getBookInfo(productId, engine)
-                    : BookInfo(0, 0, 0, 0)
+                    ? getBookInfo(productId, perpEngine)
+                    : BookInfo(0, 0, 0, 0, 0)
             });
     }
 
-    struct Txn {
-        address to;
-        bytes data;
-    }
-
-    function _getRevertMsg(
-        bytes memory _returnData
-    ) internal pure returns (string memory) {
-        // If the _res length is less than 68, then the transaction failed silently (without a revert message)
-        if (_returnData.length < 68) return "Transaction reverted silently";
-
-        assembly {
-            // Slice the sighash.
-            _returnData := add(_returnData, 0x04)
-        }
-        return abi.decode(_returnData, (string)); // All that remains is the revert string
-    }
-
-    function getSubaccountInfoWithStateChange(
-        uint64 subaccountId,
-        Txn[] memory txns
-    ) public {
-        // black magic
-        for (uint256 i = 0; i < txns.length; i++) {
-            (bool success, bytes memory output) = txns[i].to.call(txns[i].data);
-            //            require(success, "state change failed");
-            //            require(txns[i].to.call(txns[i].data));
-            require(
-                success,
-                string.concat("state change failed: ", _getRevertMsg(output))
-            );
-        }
-        revert(Base64.encode(abi.encode(this.getSubaccountInfo(subaccountId))));
-    }
-
-    function getSubaccountInfo(
-        uint64 subaccountId
-    ) external view returns (SubaccountInfo memory) {
+    function getSubaccountInfo(bytes32 subaccount)
+        public
+        view
+        returns (SubaccountInfo memory)
+    {
         SubaccountInfo memory subaccountInfo;
 
         {
@@ -269,10 +216,8 @@ contract FQuerier {
             ) = _getAllProductIds();
 
             // initial, maintenance, pnl
-            subaccountInfo.subaccountId = subaccountId;
-            subaccountInfo.exists =
-                subaccountId <= clearinghouse.getNumSubaccounts() &&
-                subaccountId != FEES_SUBACCOUNT_ID;
+            subaccountInfo.subaccount = subaccount;
+            subaccountInfo.exists = true;
             subaccountInfo.healths = new HealthInfo[](3);
             subaccountInfo.spotBalances = new SpotBalance[](spotIds.length);
             subaccountInfo.perpBalances = new PerpBalance[](perpIds.length);
@@ -282,9 +227,10 @@ contract FQuerier {
 
         IClearinghouseState.HealthGroup[] memory healthGroups = clearinghouse
             .getHealthGroups();
-        for (uint256 i = 0; i < healthGroups.length; i++) {
+        for (uint32 i = 0; i < healthGroups.length; i++) {
             IClearinghouse.HealthGroup memory group = healthGroups[i];
             IClearinghouseState.HealthVars memory healthVars;
+            healthVars.pricesX18 = endpoint.getPricesX18(i);
 
             if (group.spotId != 0) {
                 (
@@ -292,28 +238,28 @@ contract FQuerier {
                     ISpotEngine.LpBalance memory lpBalance,
                     ISpotEngine.State memory state,
                     ISpotEngine.Balance memory balance
-                ) = spotEngine.getStatesAndBalances(group.spotId, subaccountId);
+                ) = spotEngine.getStatesAndBalances(group.spotId, subaccount);
 
-                healthVars.spotPriceX18 = endpoint.getPriceX18(group.spotId);
-                int256 ratioX18 = lpBalance.amountX18 == 0
-                    ? int256(0)
-                    : lpBalance.amountX18.div(lpState.supply.fromInt());
+                if (lpBalance.amount != 0) {
+                    (int128 ammBase, int128 ammQuote) = MathHelper
+                        .ammEquilibrium(
+                            lpState.base.amount,
+                            lpState.quote.amount,
+                            healthVars.pricesX18.spotPriceX18
+                        );
 
-                (int256 ammBaseX18, int256 ammQuoteX18) = MathHelper
-                    .ammEquilibrium(
-                        lpState.base.amountX18,
-                        lpState.quote.amountX18,
-                        healthVars.spotPriceX18
-                    );
+                    for (uint128 j = 0; j < 3; ++j) {
+                        subaccountInfo.healths[j].assets += ammQuote
+                            .mul(lpBalance.amount)
+                            .div(lpState.supply);
+                    }
 
-                for (uint256 j = 0; j < 3; ++j) {
-                    subaccountInfo.healths[j].assetsX18 += ammQuoteX18.mul(
-                        ratioX18
-                    );
+                    healthVars.spotInLpAmount = ammBase
+                        .mul(lpBalance.amount)
+                        .div(lpState.supply);
                 }
 
-                healthVars.spotInLpAmountX18 = ammBaseX18.mul(ratioX18);
-                healthVars.spotAmountX18 = balance.amountX18;
+                healthVars.spotAmount = balance.amount;
                 healthVars.spotRisk = clearinghouse.getRisk(group.spotId);
 
                 subaccountInfo.spotBalances[
@@ -327,7 +273,7 @@ contract FQuerier {
                     subaccountInfo.spotCount++
                 ] = SpotProduct({
                     productId: group.spotId,
-                    oraclePriceX18: healthVars.spotPriceX18,
+                    oraclePriceX18: healthVars.pricesX18.spotPriceX18,
                     risk: healthVars.spotRisk,
                     config: spotEngine.getConfig(group.spotId),
                     state: state,
@@ -341,56 +287,55 @@ contract FQuerier {
                     IPerpEngine.LpBalance memory lpBalance,
                     IPerpEngine.State memory state,
                     IPerpEngine.Balance memory balance
-                ) = perpEngine.getStatesAndBalances(group.perpId, subaccountId);
-                healthVars.perpPriceX18 = endpoint.getPriceX18(group.perpId);
-                int256 ratioX18 = lpBalance.amountX18 == 0
-                    ? int256(0)
-                    : lpBalance.amountX18.div(lpState.supply.fromInt());
+                ) = perpEngine.getStatesAndBalances(group.perpId, subaccount);
 
-                (int256 ammBaseX18, int256 ammQuoteX18) = MathHelper
-                    .ammEquilibrium(
-                        lpState.base.fromInt(),
-                        lpState.quote.fromInt(),
-                        healthVars.perpPriceX18
-                    );
+                if (lpBalance.amount != 0) {
+                    (int128 ammBase, int128 ammQuote) = MathHelper
+                        .ammEquilibrium(
+                            lpState.base,
+                            lpState.quote,
+                            healthVars.pricesX18.perpPriceX18
+                        );
 
-                for (uint256 j = 0; j < 3; ++j) {
-                    subaccountInfo.healths[j].assetsX18 += ammQuoteX18.mul(
-                        ratioX18
-                    );
+                    for (uint128 j = 0; j < 3; ++j) {
+                        subaccountInfo.healths[j].assets += ammQuote
+                            .mul(lpBalance.amount)
+                            .div(lpState.supply);
+                    }
+                    healthVars.perpInLpAmount = ammBase
+                        .mul(lpBalance.amount)
+                        .div(lpState.supply);
                 }
 
-                for (uint256 j = 0; j < 3; ++j) {
-                    if (balance.vQuoteBalanceX18 > 0) {
-                        subaccountInfo.healths[j].assetsX18 += balance
-                            .vQuoteBalanceX18;
+                for (uint128 j = 0; j < 3; ++j) {
+                    if (balance.vQuoteBalance > 0) {
+                        subaccountInfo.healths[j].assets += balance
+                            .vQuoteBalance;
                     } else {
-                        subaccountInfo.healths[j].liabilitiesX18 -= balance
-                            .vQuoteBalanceX18;
+                        subaccountInfo.healths[j].liabilities -= balance
+                            .vQuoteBalance;
                     }
                 }
 
-                healthVars.perpInLpAmountX18 = ammBaseX18.mul(ratioX18);
-                healthVars.perpAmountX18 = balance.amountX18;
+                healthVars.perpAmount = balance.amount;
                 healthVars.perpRisk = clearinghouse.getRisk(group.perpId);
 
                 if (
-                    (healthVars.spotAmountX18 > 0) !=
-                    (healthVars.perpAmountX18 > 0)
+                    (healthVars.spotAmount > 0) != (healthVars.perpAmount > 0)
                 ) {
-                    if (healthVars.spotAmountX18 > 0) {
-                        healthVars.basisAmountX18 = MathHelper.min(
-                            healthVars.spotAmountX18,
-                            -healthVars.perpAmountX18
+                    if (healthVars.spotAmount > 0) {
+                        healthVars.basisAmount = MathHelper.min(
+                            healthVars.spotAmount,
+                            -healthVars.perpAmount
                         );
                     } else {
-                        healthVars.basisAmountX18 = MathHelper.max(
-                            healthVars.spotAmountX18,
-                            -healthVars.perpAmountX18
+                        healthVars.basisAmount = MathHelper.max(
+                            healthVars.spotAmount,
+                            -healthVars.perpAmount
                         );
                     }
-                    healthVars.spotAmountX18 -= healthVars.basisAmountX18;
-                    healthVars.perpAmountX18 += healthVars.basisAmountX18;
+                    healthVars.spotAmount -= healthVars.basisAmount;
+                    healthVars.perpAmount += healthVars.basisAmount;
                 }
 
                 subaccountInfo.perpBalances[
@@ -404,8 +349,7 @@ contract FQuerier {
                     subaccountInfo.perpCount++
                 ] = PerpProduct({
                     productId: group.perpId,
-                    oraclePriceX18: healthVars.perpPriceX18,
-                    markPriceX18: perpEngine.getMarkPrice(group.perpId),
+                    oraclePriceX18: healthVars.pricesX18.perpPriceX18,
                     risk: healthVars.perpRisk,
                     state: state,
                     lpState: lpState,
@@ -414,105 +358,111 @@ contract FQuerier {
             }
 
             // risk for the basis trade, discounted
-            if (healthVars.basisAmountX18 != 0) {
-                int256 posAmountX18 = MathHelper.abs(healthVars.basisAmountX18);
+            if (healthVars.basisAmount != 0) {
+                int128 posAmount = MathHelper.abs(healthVars.basisAmount);
 
                 for (uint8 healthType = 0; healthType < 3; ++healthType) {
                     // add the actual value of the basis (PNL)
 
-                    int256 healthContributionX18 = (healthVars.spotPriceX18 -
-                        healthVars.perpPriceX18).mul(healthVars.basisAmountX18);
+                    int128 healthContribution = (healthVars
+                        .pricesX18
+                        .spotPriceX18 - healthVars.pricesX18.perpPriceX18).mul(
+                            healthVars.basisAmount
+                        );
 
                     // compute a penalty% on the notional size of the basis trade
                     // this is equivalent to a long weight, i.e. long weight 0.95 == 0.05 penalty
                     // we take the square of the penalties on the spot and the perp positions
-                    healthContributionX18 -= RiskHelper
+                    healthContribution -= RiskHelper
                         ._getSpreadPenaltyX18(
                             healthVars.spotRisk,
                             healthVars.perpRisk,
-                            posAmountX18,
+                            posAmount,
                             IProductEngine.HealthType(healthType)
                         )
-                        .mul(posAmountX18)
-                        .mul(healthVars.spotPriceX18 + healthVars.perpPriceX18);
-                    if (healthContributionX18 > 0) {
+                        .mul(posAmount)
+                        .mul(
+                            healthVars.pricesX18.spotPriceX18 +
+                                healthVars.pricesX18.perpPriceX18
+                        );
+                    if (healthContribution > 0) {
                         subaccountInfo
                             .healths[healthType]
-                            .assetsX18 += healthContributionX18;
+                            .assets += healthContribution;
                     } else {
                         subaccountInfo
                             .healths[healthType]
-                            .liabilitiesX18 -= healthContributionX18;
+                            .liabilities -= healthContribution;
                     }
                 }
             }
 
             // apply risk for spot and perp positions
-            int256 combinedSpotX18 = healthVars.spotAmountX18 +
-                healthVars.spotInLpAmountX18;
+            int128 combinedSpot = healthVars.spotAmount +
+                healthVars.spotInLpAmount;
 
             for (uint8 healthType = 0; healthType < 3; ++healthType) {
-                int256 healthContributionX18 = RiskHelper
+                int128 healthContribution = RiskHelper
                     ._getWeightX18(
                         healthVars.spotRisk,
-                        combinedSpotX18,
+                        combinedSpot,
                         IProductEngine.HealthType(healthType)
                     )
-                    .mul(combinedSpotX18)
-                    .mul(healthVars.spotPriceX18);
+                    .mul(combinedSpot)
+                    .mul(healthVars.pricesX18.spotPriceX18);
 
                 // Spot LP penalty
-                healthContributionX18 -= (ONE -
+                healthContribution -= (ONE -
                     RiskHelper._getWeightX18(
                         healthVars.spotRisk,
-                        healthVars.spotInLpAmountX18,
+                        healthVars.spotInLpAmount,
                         IProductEngine.HealthType(healthType)
-                    )).mul(healthVars.spotInLpAmountX18).mul(
-                        healthVars.spotPriceX18
+                    )).mul(healthVars.spotInLpAmount).mul(
+                        healthVars.pricesX18.spotPriceX18
                     );
 
-                if (healthContributionX18 > 0) {
+                if (healthContribution > 0) {
                     subaccountInfo
                         .healths[healthType]
-                        .assetsX18 += healthContributionX18;
+                        .assets += healthContribution;
                 } else {
                     subaccountInfo
                         .healths[healthType]
-                        .liabilitiesX18 -= healthContributionX18;
+                        .liabilities -= healthContribution;
                 }
             }
 
-            int256 combinedPerpX18 = healthVars.perpAmountX18 +
-                healthVars.perpInLpAmountX18;
+            int128 combinedPerp = healthVars.perpAmount +
+                healthVars.perpInLpAmount;
 
             for (uint8 healthType = 0; healthType < 3; ++healthType) {
-                int256 healthContributionX18 = RiskHelper
+                int128 healthContribution = RiskHelper
                     ._getWeightX18(
                         healthVars.perpRisk,
-                        combinedPerpX18,
+                        combinedPerp,
                         IProductEngine.HealthType(healthType)
                     )
-                    .mul(combinedPerpX18)
-                    .mul(healthVars.perpPriceX18);
+                    .mul(combinedPerp)
+                    .mul(healthVars.pricesX18.perpPriceX18);
 
                 // perp LP penalty
-                healthContributionX18 -= (ONE -
+                healthContribution -= (ONE -
                     RiskHelper._getWeightX18(
                         healthVars.perpRisk,
-                        healthVars.perpInLpAmountX18,
+                        healthVars.perpInLpAmount,
                         IProductEngine.HealthType(healthType)
-                    )).mul(healthVars.perpInLpAmountX18).mul(
-                        healthVars.perpPriceX18
+                    )).mul(healthVars.perpInLpAmount).mul(
+                        healthVars.pricesX18.perpPriceX18
                     );
 
-                if (healthContributionX18 > 0) {
+                if (healthContribution > 0) {
                     subaccountInfo
                         .healths[healthType]
-                        .assetsX18 += healthContributionX18;
+                        .assets += healthContribution;
                 } else {
                     subaccountInfo
                         .healths[healthType]
-                        .liabilitiesX18 -= healthContributionX18;
+                        .liabilities -= healthContribution;
                 }
             }
         }
@@ -522,7 +472,7 @@ contract FQuerier {
             (
                 ISpotEngine.State memory state,
                 ISpotEngine.Balance memory balance
-            ) = spotEngine.getStateAndBalance(QUOTE_PRODUCT_ID, subaccountId);
+            ) = spotEngine.getStateAndBalance(QUOTE_PRODUCT_ID, subaccount);
             subaccountInfo
                 .spotBalances[subaccountInfo.spotCount]
                 .balance = balance;
@@ -539,66 +489,61 @@ contract FQuerier {
                 .spotProducts[subaccountInfo.spotCount++]
                 .state = state;
 
-            for (uint256 i = 0; i < 3; ++i) {
-                if (balance.amountX18 > 0) {
-                    subaccountInfo.healths[i].assetsX18 += balance.amountX18;
+            for (uint128 i = 0; i < 3; ++i) {
+                if (balance.amount > 0) {
+                    subaccountInfo.healths[i].assets += balance.amount;
                 } else {
-                    subaccountInfo.healths[i].liabilitiesX18 -= balance
-                        .amountX18;
+                    subaccountInfo.healths[i].liabilities -= balance.amount;
                 }
             }
         }
 
-        for (uint256 i = 0; i < 3; ++i) {
-            subaccountInfo.healths[i].healthX18 =
-                subaccountInfo.healths[i].assetsX18 -
-                subaccountInfo.healths[i].liabilitiesX18;
+        for (uint128 i = 0; i < 3; ++i) {
+            subaccountInfo.healths[i].health =
+                subaccountInfo.healths[i].assets -
+                subaccountInfo.healths[i].liabilities;
         }
 
         return subaccountInfo;
     }
 
-    function getSpotBalances(
-        uint64 subaccountId,
-        uint32[] memory productIds
-    ) public view returns (SpotBalance[] memory spotBalances) {
-        ISpotEngine engine = ISpotEngine(
-            clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
-        );
+    function getSpotBalances(bytes32 subaccount, uint32[] memory productIds)
+        public
+        view
+        returns (SpotBalance[] memory spotBalances)
+    {
         spotBalances = new SpotBalance[](productIds.length);
 
         for (uint32 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
-            spotBalances[i] = _getSpotBalance(subaccountId, productId, engine);
+            spotBalances[i] = getSpotBalance(subaccount, productId);
         }
     }
 
-    function getPerpBalances(
-        uint64 subaccountId,
-        uint32[] memory productIds
-    ) public view returns (PerpBalance[] memory perpBalances) {
-        IPerpEngine engine = IPerpEngine(
-            clearinghouse.getEngineByType(IProductEngine.EngineType.PERP)
-        );
+    function getPerpBalances(bytes32 subaccount, uint32[] memory productIds)
+        public
+        view
+        returns (PerpBalance[] memory perpBalances)
+    {
         perpBalances = new PerpBalance[](productIds.length);
 
         for (uint32 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
-            perpBalances[i] = _getPerpBalance(subaccountId, productId, engine);
+            perpBalances[i] = getPerpBalance(subaccount, productId);
         }
     }
 
-    function _getSpotBalance(
-        uint64 subaccountId,
-        uint32 productId,
-        ISpotEngine engine
-    ) internal view returns (SpotBalance memory) {
+    function getSpotBalance(bytes32 subaccount, uint32 productId)
+        public
+        view
+        returns (SpotBalance memory)
+    {
         (
             ,
             ISpotEngine.LpBalance memory lpBalance,
             ,
             ISpotEngine.Balance memory balance
-        ) = engine.getStatesAndBalances(productId, subaccountId);
+        ) = spotEngine.getStatesAndBalances(productId, subaccount);
         return
             SpotBalance({
                 productId: productId,
@@ -607,17 +552,17 @@ contract FQuerier {
             });
     }
 
-    function _getPerpBalance(
-        uint64 subaccountId,
-        uint32 productId,
-        IPerpEngine engine
-    ) internal view returns (PerpBalance memory) {
+    function getPerpBalance(bytes32 subaccount, uint32 productId)
+        public
+        view
+        returns (PerpBalance memory)
+    {
         (
             ,
             IPerpEngine.LpBalance memory lpBalance,
             ,
             IPerpEngine.Balance memory balance
-        ) = engine.getStatesAndBalances(productId, subaccountId);
+        ) = perpEngine.getStatesAndBalances(productId, subaccount);
         return
             PerpBalance({
                 productId: productId,
@@ -626,17 +571,19 @@ contract FQuerier {
             });
     }
 
-    function getBookInfo(
-        uint32 productId,
-        IProductEngine engine
-    ) public view returns (BookInfo memory bookInfo) {
+    function getBookInfo(uint32 productId, IProductEngine engine)
+        public
+        view
+        returns (BookInfo memory bookInfo)
+    {
         IOffchainBook book = IOffchainBook(engine.getOrderbook(productId));
         IOffchainBook.Market memory market = book.getMarket();
         return
             BookInfo({
                 sizeIncrement: market.sizeIncrement,
                 priceIncrementX18: market.priceIncrementX18,
-                collectedFeesX18: market.collectedFeesX18,
+                minSize: book.getMinSize(),
+                collectedFees: market.collectedFees,
                 lpSpreadX18: market.lpSpreadX18
             });
     }

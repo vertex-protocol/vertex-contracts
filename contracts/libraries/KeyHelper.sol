@@ -5,10 +5,11 @@ pragma solidity ^0.8.0;
 /// @dev Provides functionality to retrieve market ids from product ids and vice versa
 library KeyHelper {
     /// @notice Returns market id for two given product ids
-    function productsToMarket(
-        uint32 a,
-        uint32 b
-    ) internal pure returns (uint32) {
+    function productsToMarket(uint32 a, uint32 b)
+        internal
+        pure
+        returns (uint32)
+    {
         require(a > 0 && b > 0 && a != b);
         return (a << 16) | b;
     }

@@ -1,59 +1,84 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
 import "./interfaces/engine/ISpotEngine.sol";
 import "./BaseEngine.sol";
 
 abstract contract SpotEngineState is ISpotEngine, BaseEngine {
-    using PRBMathSD59x18 for int256;
+    using MathSD21x18 for int128;
 
     mapping(uint32 => Config) internal configs;
     mapping(uint32 => State) public states;
-    mapping(uint32 => mapping(uint64 => Balance)) public balances;
+    mapping(uint32 => mapping(bytes32 => Balances)) public balances;
 
     mapping(uint32 => LpState) public lpStates;
-    mapping(uint32 => mapping(uint64 => LpBalance)) public lpBalances;
+
+    mapping(uint32 => int128) public withdrawFees;
+
+    function _updateBalanceWithoutDelta(
+        State memory state,
+        Balance memory balance
+    ) internal pure {
+        if (balance.amount == 0) {
+            balance.lastCumulativeMultiplierX18 = state
+                .cumulativeDepositsMultiplierX18;
+            return;
+        }
+
+        // Current cumulative multiplier associated with product
+        int128 cumulativeMultiplierX18;
+        if (balance.amount > 0) {
+            cumulativeMultiplierX18 = state.cumulativeDepositsMultiplierX18;
+        } else {
+            cumulativeMultiplierX18 = state.cumulativeBorrowsMultiplierX18;
+        }
+
+        if (balance.lastCumulativeMultiplierX18 == cumulativeMultiplierX18) {
+            return;
+        }
+
+        balance.amount = balance.amount.mul(cumulativeMultiplierX18).div(
+            balance.lastCumulativeMultiplierX18
+        );
+
+        balance.lastCumulativeMultiplierX18 = cumulativeMultiplierX18;
+    }
 
     function _updateBalance(
         State memory state,
         Balance memory balance,
-        int256 balanceDeltaX18
+        int128 balanceDelta
     ) internal pure {
-        if (
-            balance.amountX18 == 0 && balance.lastCumulativeMultiplierX18 == 0
-        ) {
+        if (balance.amount == 0 && balance.lastCumulativeMultiplierX18 == 0) {
             balance.lastCumulativeMultiplierX18 = ONE;
         }
 
-        if (balance.amountX18 > 0) {
-            state.totalDepositsNormalizedX18 -= balance.amountX18.div(
+        if (balance.amount > 0) {
+            state.totalDepositsNormalized -= balance.amount.div(
                 balance.lastCumulativeMultiplierX18
             );
         } else {
-            state.totalBorrowsNormalizedX18 += balance.amountX18.div(
+            state.totalBorrowsNormalized += balance.amount.div(
                 balance.lastCumulativeMultiplierX18
             );
         }
 
         // Current cumulative multiplier associated with product
-        int256 cumulativeMultiplierX18;
-        if (balance.amountX18 > 0) {
+        int128 cumulativeMultiplierX18;
+        if (balance.amount > 0) {
             cumulativeMultiplierX18 = state.cumulativeDepositsMultiplierX18;
         } else {
             cumulativeMultiplierX18 = state.cumulativeBorrowsMultiplierX18;
         }
 
         // Apply balance delta and interest rate
-        // console.log("paying out interest");
-        // console.logInt(balance.amountX18 - balance.amountX18.mul(
-        //         cumulativeMultiplierX18.div(balance.lastCumulativeMultiplierX18)
-        //     ));
-        balance.amountX18 =
-            balance.amountX18.mul(
+        balance.amount =
+            balance.amount.mul(
                 cumulativeMultiplierX18.div(balance.lastCumulativeMultiplierX18)
             ) +
-            balanceDeltaX18;
+            balanceDelta;
 
-        if (balance.amountX18 > 0) {
+        if (balance.amount > 0) {
             cumulativeMultiplierX18 = state.cumulativeDepositsMultiplierX18;
         } else {
             cumulativeMultiplierX18 = state.cumulativeBorrowsMultiplierX18;
@@ -62,42 +87,81 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         balance.lastCumulativeMultiplierX18 = cumulativeMultiplierX18;
 
         // Update the product given balanceDelta
-        if (balance.amountX18 > 0) {
-            state.totalDepositsNormalizedX18 += balance.amountX18.div(
+        if (balance.amount > 0) {
+            state.totalDepositsNormalized += balance.amount.div(
                 balance.lastCumulativeMultiplierX18
             );
         } else {
-            state.totalBorrowsNormalizedX18 -= balance.amountX18.div(
+            state.totalBorrowsNormalized -= balance.amount.div(
                 balance.lastCumulativeMultiplierX18
             );
+        }
+    }
+
+    function _updateBalanceNormalized(
+        State memory state,
+        BalanceNormalized memory balance,
+        int128 balanceDelta
+    ) internal pure {
+        if (balance.amountNormalized > 0) {
+            state.totalDepositsNormalized -= balance.amountNormalized;
+        } else {
+            state.totalBorrowsNormalized += balance.amountNormalized;
+        }
+
+        // Current cumulative multiplier associated with product
+        int128 cumulativeMultiplierX18;
+        if (balance.amountNormalized > 0) {
+            cumulativeMultiplierX18 = state.cumulativeDepositsMultiplierX18;
+        } else {
+            cumulativeMultiplierX18 = state.cumulativeBorrowsMultiplierX18;
+        }
+
+        int128 newAmount = balance.amountNormalized.mul(
+            cumulativeMultiplierX18
+        ) + balanceDelta;
+
+        if (newAmount > 0) {
+            cumulativeMultiplierX18 = state.cumulativeDepositsMultiplierX18;
+        } else {
+            cumulativeMultiplierX18 = state.cumulativeBorrowsMultiplierX18;
+        }
+
+        balance.amountNormalized = newAmount.div(cumulativeMultiplierX18);
+
+        // Update the product given balanceDelta
+        if (balance.amountNormalized > 0) {
+            state.totalDepositsNormalized += balance.amountNormalized;
+        } else {
+            state.totalBorrowsNormalized -= balance.amountNormalized;
         }
     }
 
     function _updateState(
         uint32 productId,
         State memory state,
-        uint256 dt
+        uint128 dt
     ) internal {
-        int256 utilizationRatioX18;
-        int256 totalDepositsX18 = state.totalDepositsNormalizedX18.mul(
+        int128 utilizationRatioX18;
+        int128 totalDeposits = state.totalDepositsNormalized.mul(
             state.cumulativeDepositsMultiplierX18
         );
 
         {
-            int256 totalBorrowsX18 = state.totalBorrowsNormalizedX18.mul(
+            int128 totalBorrows = state.totalBorrowsNormalized.mul(
                 state.cumulativeBorrowsMultiplierX18
             );
-            utilizationRatioX18 = totalDepositsX18 == 0
-                ? int256(0)
-                : totalBorrowsX18.div(totalDepositsX18);
+            utilizationRatioX18 = totalDeposits == 0
+                ? int128(0)
+                : totalBorrows.div(totalDeposits);
         }
 
-        int256 borrowRateMultiplierX18;
+        int128 borrowRateMultiplierX18;
         {
             Config memory config = configs[productId];
 
             // annualized borrower rate
-            int256 borrowerRateX18 = config.interestFloorX18;
+            int128 borrowerRateX18 = config.interestFloorX18;
             if (utilizationRatioX18 == 0) {
                 // setting borrowerRateX18 to 0 here has the property that
                 // adding a product at the beginning of time and not using it until time T
@@ -123,11 +187,9 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
 
             // convert to per second
             borrowerRateX18 = borrowerRateX18.div(
-                PRBMathSD59x18.fromInt(31536000)
+                MathSD21x18.fromInt(31536000)
             );
-            borrowRateMultiplierX18 = (ONE + borrowerRateX18).pow(
-                int256(dt).fromInt()
-            );
+            borrowRateMultiplierX18 = (ONE + borrowerRateX18).pow(int128(dt));
         }
 
         // if we don't take fees into account, the liquidity, which is
@@ -142,17 +204,17 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         // (td * cdm * depositRateMultiplier - tb * cbm * borrowRateMultiplier)
         // so we can get
         // depositRateMultiplier = utilization * (borrowRateMultiplier - 1) + 1
-        int256 totalDepositRateX18 = utilizationRatioX18.mul(
+        int128 totalDepositRateX18 = utilizationRatioX18.mul(
             borrowRateMultiplierX18 - ONE
         );
 
         // deduct protocol fees
-        int256 realizedDepositRateX18 = totalDepositRateX18.mul(
+        int128 realizedDepositRateX18 = totalDepositRateX18.mul(
             ONE - _fees.getInterestFeeFractionX18(productId)
         );
 
         // pass fees balance change
-        int256 feesAmtX18 = totalDepositsX18.mul(
+        int128 feesAmt = totalDeposits.mul(
             totalDepositRateX18 - realizedDepositRateX18
         );
 
@@ -164,42 +226,112 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             .cumulativeDepositsMultiplierX18
             .mul(ONE + realizedDepositRateX18);
 
-        if (feesAmtX18 != 0) {
-            Balance memory feesAccBalance = balances[productId][
-                FEES_SUBACCOUNT_ID
-            ];
-            _updateBalance(state, feesAccBalance, feesAmtX18);
-            balances[productId][FEES_SUBACCOUNT_ID] = feesAccBalance;
+        if (feesAmt != 0) {
+            BalanceNormalized memory feesAccBalance = balances[productId][
+                FEES_ACCOUNT
+            ].balance;
+            _updateBalanceNormalized(state, feesAccBalance, feesAmt);
+            balances[productId][FEES_ACCOUNT].balance = feesAccBalance;
         }
     }
 
-    function getStateAndBalance(
-        uint32 productId,
-        uint64 subaccountId
-    ) public view returns (State memory, Balance memory) {
-        State memory state = states[productId];
-        Balance memory balance = balances[productId][subaccountId];
-        _updateBalance(state, balance, 0);
-        return (state, balance);
+    function balanceNormalizedToBalance(
+        State memory state,
+        BalanceNormalized memory balance
+    ) internal pure returns (Balance memory) {
+        int128 cumulativeMultiplierX18;
+        if (balance.amountNormalized > 0) {
+            cumulativeMultiplierX18 = state.cumulativeDepositsMultiplierX18;
+        } else {
+            cumulativeMultiplierX18 = state.cumulativeBorrowsMultiplierX18;
+        }
+
+        return
+            Balance(
+                balance.amountNormalized.mul(cumulativeMultiplierX18),
+                cumulativeMultiplierX18
+            );
     }
 
-    function getStatesAndBalances(
-        uint32 productId,
-        uint64 subaccountId
-    )
+    function getStateAndBalance(uint32 productId, bytes32 subaccount)
+        public
+        view
+        returns (State memory, Balance memory)
+    {
+        State memory state = states[productId];
+        BalanceNormalized memory balance = balances[productId][subaccount]
+            .balance;
+        return (state, balanceNormalizedToBalance(state, balance));
+    }
+
+    function getBalance(uint32 productId, bytes32 subaccount)
+        public
+        view
+        returns (Balance memory)
+    {
+        State memory state = states[productId];
+        BalanceNormalized memory balance = balances[productId][subaccount]
+            .balance;
+        return balanceNormalizedToBalance(state, balance);
+    }
+
+    function hasBalance(uint32 productId, bytes32 subaccount)
         external
         view
-        returns (LpState memory, LpBalance memory, State memory, Balance memory)
+        returns (bool)
+    {
+        Balances memory allBalances = balances[productId][subaccount];
+        return
+            allBalances.balance.amountNormalized != 0 ||
+            allBalances.lpBalance.amount != 0;
+    }
+
+    function getStatesAndBalances(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (
+            LpState memory,
+            LpBalance memory,
+            State memory,
+            Balance memory
+        )
     {
         LpState memory lpState = lpStates[productId];
         State memory state = states[productId];
-        LpBalance memory lpBalance = lpBalances[productId][subaccountId];
-        Balance memory balance = balances[productId][subaccountId];
-        _updateBalance(state, balance, 0);
-        return (lpState, lpBalance, state, balance);
+        LpBalance memory lpBalance = balances[productId][subaccount].lpBalance;
+        BalanceNormalized memory balance = balances[productId][subaccount]
+            .balance;
+
+        return (
+            lpState,
+            lpBalance,
+            state,
+            balanceNormalizedToBalance(state, balance)
+        );
     }
 
-    function updateStates(uint256 dt) external {
+    function getBalances(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (LpBalance memory, Balance memory)
+    {
+        State memory state = states[productId];
+        LpBalance memory lpBalance = balances[productId][subaccount].lpBalance;
+        BalanceNormalized memory balance = balances[productId][subaccount]
+            .balance;
+
+        return (lpBalance, balanceNormalizedToBalance(state, balance));
+    }
+
+    function getLpState(uint32 productId)
+        external
+        view
+        returns (LpState memory)
+    {
+        return lpStates[productId];
+    }
+
+    function updateStates(uint128 dt) external onlyEndpoint {
         State memory quoteState = states[QUOTE_PRODUCT_ID];
         _updateState(QUOTE_PRODUCT_ID, quoteState, dt);
 
@@ -211,8 +343,8 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             State memory state = states[productId];
             LpState memory lpState = lpStates[productId];
             _updateState(productId, state, dt);
-            _updateBalance(state, lpState.base, 0);
-            _updateBalance(quoteState, lpState.quote, 0);
+            _updateBalanceWithoutDelta(state, lpState.base);
+            _updateBalanceWithoutDelta(quoteState, lpState.quote);
             lpStates[productId] = lpState;
             states[productId] = state;
         }

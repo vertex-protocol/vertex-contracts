@@ -18,19 +18,11 @@ contract FSpotEngine is SpotEngine {
         lpStates[productId] = lpState;
     }
 
-    function setBalance(
-        uint32 productId,
-        uint64 subaccountId,
-        Balance calldata balance
-    ) public {
-        balances[productId][subaccountId] = balance;
-    }
-
     function setLpBalance(
         uint32 productId,
-        uint64 subaccountId,
+        bytes32 subaccount,
         LpBalance calldata lpBalance
     ) public {
-        lpBalances[productId][subaccountId] = lpBalance;
+        balances[productId][subaccount].lpBalance = lpBalance;
     }
 }

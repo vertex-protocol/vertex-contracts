@@ -2,22 +2,31 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-
+import "./Version.sol";
 import "./interfaces/IFeeCalculator.sol";
 
 // Playground for volume tracking: https://github.com/vertex-protocol/vertex-evm/commit/b52ea07a6b40ab8b0d8198886bc4ac6e60c61233
-contract FeeCalculator is Initializable, IFeeCalculator {
+contract FeeCalculator is Initializable, IFeeCalculator, Version {
     function initialize() external initializer {}
 
-    function recordVolume(uint64 subaccount, uint256 quoteVolume) external {}
+    function recordVolume(bytes32 subaccount, uint128 quoteVolume) external {}
 
     function getFeeFractionX18(
-        uint64 /* subaccountId */,
-        uint32 /* productId */,
+        bytes32, /* subaccount */
+        uint32 productId,
         bool taker
-    ) external pure returns (int256) {
+    ) external pure returns (int128) {
+        require(productId != 0 && productId <= 4, "invalid productId");
         if (taker) {
-            return 2_000_000_000_000_000; // 0.2%
+            if (productId == 1) {
+                return 300_000_000_000_000;
+            } else if (productId == 2) {
+                return 200_000_000_000_000;
+            } else if (productId == 3) {
+                return 300_000_000_000_000;
+            } else {
+                return 200_000_000_000_000;
+            }
         } else {
             return 0;
         }
@@ -26,7 +35,14 @@ contract FeeCalculator is Initializable, IFeeCalculator {
 
     function getInterestFeeFractionX18(
         uint32 /* productId */
-    ) external pure returns (int256) {
+    ) external pure returns (int128) {
         return 200_000_000_000_000_000; // 20%
+    }
+
+    function getLiquidationFeeFractionX18(
+        bytes32, /* subaccount */
+        uint32 /* productId */
+    ) external pure returns (int128) {
+        return 250_000_000_000_000_000; // 25%
     }
 }

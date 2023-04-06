@@ -8,9 +8,22 @@ import "./IProductEngineState.sol";
 interface IProductEngine is IProductEngineState {
     event AddProduct(uint32 productId);
     event ProductUpdate(uint32 indexed productId);
-    event SocializeProduct(
+    event SocializeProduct(uint32 indexed productId, int128 amountSocialized);
+
+    event MintLp(
         uint32 indexed productId,
-        int256 amountSocializedX18
+        bytes32 indexed subaccount,
+        int128 lpAmount,
+        int128 baseAmount,
+        int128 quoteAmount
+    );
+
+    event BurnLp(
+        uint32 indexed productId,
+        bytes32 indexed subaccount,
+        int128 lpAmount,
+        int128 baseAmount,
+        int128 quoteAmount
     );
 
     enum EngineType {
@@ -26,9 +39,9 @@ interface IProductEngine is IProductEngineState {
 
     struct ProductDelta {
         uint32 productId;
-        uint64 subaccountId;
-        int256 amountDeltaX18;
-        int256 vQuoteDeltaX18;
+        bytes32 subaccount;
+        int128 amountDelta;
+        int128 vQuoteDelta;
     }
 
     /// @notice Initializes the engine
@@ -46,35 +59,32 @@ interface IProductEngine is IProductEngineState {
 
     function swapLp(
         uint32 productId,
-        uint64 subaccountId,
+        bytes32 subaccount,
         // maximum to swap
-        int256 amount,
-        int256 priceX18,
-        int256 sizeIncrement,
-        int256 lpSpreadX18
-    ) external returns (int256, int256);
+        int128 amount,
+        int128 priceX18,
+        int128 sizeIncrement,
+        int128 lpSpreadX18
+    ) external returns (int128, int128);
 
     function mintLp(
         uint32 productId,
-        uint64 subaccountId,
-        int256 amountBaseX18,
-        int256 quoteAmountLowX18,
-        int256 quoteAmountHighX18
+        bytes32 subaccount,
+        int128 amountBase,
+        int128 quoteAmountLow,
+        int128 quoteAmountHigh
     ) external;
 
     function burnLp(
         uint32 productId,
-        uint64 subaccountId,
+        bytes32 subaccount,
         // passing 0 here means to burn all
-        int256 amountLpX18
-    ) external;
+        int128 amountLp
+    ) external returns (int128);
 
-    function socializeSubaccount(
-        uint64 subaccountId,
-        int256 insuranceX18
-    ) external returns (int256);
-
-    function decomposeLps(uint64 liquidateeId, uint64 liquidatorId) external;
-
-    function updateStates(uint256 dt) external;
+    function decomposeLps(
+        bytes32 liquidatee,
+        bytes32 liquidator,
+        address feeCalculator
+    ) external returns (int128);
 }

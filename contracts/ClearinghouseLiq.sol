@@ -1,67 +1,324 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-import "./libraries/MathSD21x18.sol";
-import "@openzeppelin/contracts/utils/Base64.sol";
-import "./interfaces/IFEndpoint.sol";
-import "./Clearinghouse.sol";
-import "./ClearinghouseLiq.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "hardhat/console.sol";
 
-contract FClearinghouse is Clearinghouse, ClearinghouseLiq {
+import "./common/Constants.sol";
+import "./interfaces/clearinghouse/IClearinghouseLiq.sol";
+import "./interfaces/clearinghouse/IClearinghouse.sol";
+import "./interfaces/engine/IProductEngine.sol";
+import "./interfaces/engine/ISpotEngine.sol";
+import "./interfaces/IOffchainBook.sol";
+import "./libraries/KeyHelper.sol";
+import "./libraries/ERC20Helper.sol";
+import "./libraries/MathHelper.sol";
+import "./libraries/MathSD21x18.sol";
+import "./interfaces/engine/IPerpEngine.sol";
+import "./EndpointGated.sol";
+import "./interfaces/IEndpoint.sol";
+import "./ClearinghouseRisk.sol";
+import "./ClearinghouseStorage.sol";
+import "./Version.sol";
+
+contract ClearinghouseLiq is
+    ClearinghouseRisk,
+    ClearinghouseStorage,
+    IClearinghouseLiq,
+    Version
+{
     using MathSD21x18 for int128;
 
-    // token => balance
-    mapping(address => uint128) public tokenBalances;
-
-    function handleDepositTransfer(
-        IERC20Base token,
-        address,
-        uint128 amount
-    ) internal override {
-        tokenBalances[address(token)] += amount;
+    function getHealthFromClearinghouse(
+        bytes32 subaccount,
+        IProductEngine.HealthType healthType
+    ) internal view returns (int128 health) {
+        return IClearinghouse(clearinghouse).getHealth(subaccount, healthType);
     }
 
-    function handleWithdrawTransfer(
-        IERC20Base token,
-        address,
-        uint128 amount
-    ) internal override {
-        require(tokenBalances[address(token)] >= amount, "balance is too low");
-        tokenBalances[address(token)] -= amount;
+    function isUnderInitial(bytes32 subaccount) public view returns (bool) {
+        // Weighted initial health with limit orders < 0
+        return
+            getHealthFromClearinghouse(
+                subaccount,
+                IProductEngine.HealthType.INITIAL
+            ) < 0;
     }
 
-    function setInsurance(int128 amount) external {
-        insurance = amount;
+    function isAboveInitial(bytes32 subaccount) public view returns (bool) {
+        // Weighted initial health with limit orders < 0
+        return
+            getHealthFromClearinghouse(
+                subaccount,
+                IProductEngine.HealthType.INITIAL
+            ) > 0;
     }
 
-    function setTokenBalance(address token, uint128 amount) external {
-        tokenBalances[token] = amount;
-    }
-
-    function getTokenBalance(address token) external view returns (uint128) {
-        IERC20Base erc20Token = IERC20Base(token);
-        uint256 multiplier = uint256(
-            10**(MAX_DECIMALS - erc20Token.decimals())
-        );
-        return tokenBalances[token] * uint128(multiplier);
-    }
-
-    function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata txn)
-        external
-        override
-        onlyEndpoint
-    {
-        this.liquidateSubaccountImpl(txn);
-    }
-
-    // helper functions
-    // allows indexer to access balances after specific steps in liquidation
-    // to make computing pnl easier
-    function liqDecomposeLps(IEndpoint.LiquidateSubaccount calldata txn)
-        public
+    function isUnderMaintenance(bytes32 subaccount)
+        internal
+        view
         returns (bool)
     {
+        // Weighted maintenance health < 0
+        return
+            getHealthFromClearinghouse(
+                subaccount,
+                IProductEngine.HealthType.MAINTENANCE
+            ) < 0;
+    }
+
+    function _getOrderbook(uint32 productId) internal view returns (address) {
+        return address(productToEngine[productId].getOrderbook(productId));
+    }
+
+    struct HealthGroupSummary {
+        uint32 perpId;
+        int128 perpAmount;
+        int128 perpVQuote;
+        int128 perpPriceX18;
+        uint32 spotId;
+        int128 spotAmount;
+        int128 spotPriceX18;
+        int128 basisAmount;
+    }
+
+    function describeHealthGroup(
+        ISpotEngine spotEngine,
+        IPerpEngine perpEngine,
+        uint32 groupId,
+        bytes32 subaccount
+    ) internal view returns (HealthGroupSummary memory summary) {
+        HealthGroup memory group = healthGroups[groupId];
+
+        if (group.spotId != 0) {
+            (, ISpotEngine.Balance memory balance) = spotEngine
+                .getStateAndBalance(group.spotId, subaccount);
+            summary.spotAmount = balance.amount;
+            summary.spotPriceX18 = getOraclePriceX18(group.spotId);
+            summary.spotId = group.spotId;
+        }
+
+        if (group.perpId != 0) {
+            (, IPerpEngine.Balance memory balance) = perpEngine
+                .getStateAndBalance(group.perpId, subaccount);
+            summary.perpAmount = balance.amount;
+            summary.perpVQuote = balance.vQuoteBalance;
+            summary.perpPriceX18 = getOraclePriceX18(group.perpId);
+            summary.perpId = group.perpId;
+        }
+
+        if ((summary.spotAmount > 0) != (summary.perpAmount > 0)) {
+            if (summary.spotAmount > 0) {
+                summary.basisAmount = MathHelper.min(
+                    summary.spotAmount,
+                    -summary.perpAmount
+                );
+            } else {
+                summary.basisAmount = MathHelper.max(
+                    summary.spotAmount,
+                    -summary.perpAmount
+                );
+            }
+            summary.spotAmount -= summary.basisAmount;
+            summary.perpAmount += summary.basisAmount;
+        }
+    }
+
+    enum LiquidationStatus {
+        CannotLiquidateLiabilities, // still has assets or perps
+        CannotSocialize, // still has basis liabilities
+        // must wait until basis liability liquidation is finished
+        // and only spot liabilities are remaining
+        // remaining: spot liabilities and perp losses
+        // if insurance drained:
+        // -> socialize all
+        // if insurance not drained
+        // -> if spot liabilities, exit
+        // -> else attempt to repay all from insurance
+        CanSocialize
+    }
+
+    function assertLiquidationAmount(
+        int128 originalBalance,
+        int128 liquidationAmount
+    ) internal pure {
+        require(
+            originalBalance != 0 && liquidationAmount != 0,
+            ERR_NOT_LIQUIDATABLE_AMT
+        );
+        if (liquidationAmount > 0) {
+            require(
+                originalBalance >= liquidationAmount,
+                ERR_NOT_LIQUIDATABLE_AMT
+            );
+        } else {
+            require(
+                originalBalance <= liquidationAmount,
+                ERR_NOT_LIQUIDATABLE_AMT
+            );
+        }
+    }
+
+    struct LiquidationVars {
+        int128 liquidationPriceX18;
+        int128 excessPerpToLiquidate;
+        int128 liquidationPayment;
+        int128 insuranceCover;
+        int128 oraclePriceX18;
+        int128 liquidationFees;
+        int128 perpSizeIncrement;
+    }
+
+    function settlePnlAgainstLiquidator(
+        ISpotEngine spotEngine,
+        IPerpEngine perpEngine,
+        bytes32 liquidator,
+        bytes32 liquidatee,
+        uint32 perpId,
+        int128 positionPnl
+    ) internal {
+        IProductEngine.ProductDelta[] memory deltas;
+        deltas = new IProductEngine.ProductDelta[](2);
+        deltas[0] = IProductEngine.ProductDelta({
+            productId: perpId,
+            subaccount: liquidatee,
+            amountDelta: 0,
+            vQuoteDelta: -positionPnl
+        });
+        deltas[1] = IProductEngine.ProductDelta({
+            productId: perpId,
+            subaccount: liquidator,
+            amountDelta: 0,
+            vQuoteDelta: positionPnl
+        });
+        perpEngine.applyDeltas(deltas);
+
+        deltas = new IProductEngine.ProductDelta[](2);
+        deltas[0] = IProductEngine.ProductDelta({
+            productId: QUOTE_PRODUCT_ID,
+            subaccount: liquidatee,
+            amountDelta: positionPnl,
+            vQuoteDelta: 0
+        });
+        deltas[1] = IProductEngine.ProductDelta({
+            productId: QUOTE_PRODUCT_ID,
+            subaccount: liquidator,
+            amountDelta: -positionPnl,
+            vQuoteDelta: 0
+        });
+        spotEngine.applyDeltas(deltas);
+    }
+
+    function finalizeSubaccount(
+        ISpotEngine spotEngine,
+        IPerpEngine perpEngine,
+        bytes32 liquidator,
+        bytes32 liquidatee
+    ) internal {
+        // check whether the subaccount can be finalized:
+        // - all perps positions have closed
+        // - all spread positions have closed
+        // - all spot assets have closed
+        // - all positive pnls have been settled
+        // - after settling all positive pnls, if (quote + insurance) is positive,
+        //   all spot liabilities have closed
+        IProductEngine.ProductDelta[] memory deltas;
+
+        for (uint32 i = 0; i <= maxHealthGroup; ++i) {
+            HealthGroupSummary memory summary = describeHealthGroup(
+                spotEngine,
+                perpEngine,
+                i,
+                liquidatee
+            );
+
+            require(
+                summary.perpAmount == 0 &&
+                    summary.basisAmount == 0 &&
+                    summary.spotAmount <= 0,
+                ERR_NOT_FINALIZABLE_SUBACCOUNT
+            );
+
+            // spread positions have been closed so vQuote balance is the pnl
+            int128 positionPnl = summary.perpVQuote;
+            if (positionPnl > 0) {
+                settlePnlAgainstLiquidator(
+                    spotEngine,
+                    perpEngine,
+                    liquidator,
+                    liquidatee,
+                    summary.perpId,
+                    positionPnl
+                );
+            }
+        }
+
+        (, ISpotEngine.Balance memory quoteBalance) = spotEngine
+            .getStateAndBalance(QUOTE_PRODUCT_ID, liquidatee);
+
+        insurance -= lastLiquidationFees;
+        bool canLiquidateMore = (quoteBalance.amount + insurance) > 0;
+
+        // settle negative pnls until quote balance becomes 0
+        for (uint32 i = 0; i <= maxHealthGroup; ++i) {
+            HealthGroupSummary memory summary = describeHealthGroup(
+                spotEngine,
+                perpEngine,
+                i,
+                liquidatee
+            );
+            if (canLiquidateMore) {
+                require(
+                    summary.spotAmount == 0,
+                    ERR_NOT_FINALIZABLE_SUBACCOUNT
+                );
+            }
+            if (quoteBalance.amount > 0) {
+                int128 positionPnl = summary.perpVQuote;
+                if (positionPnl < 0) {
+                    int128 canSettle = MathHelper.max(
+                        positionPnl,
+                        -quoteBalance.amount
+                    );
+                    settlePnlAgainstLiquidator(
+                        spotEngine,
+                        perpEngine,
+                        liquidator,
+                        liquidatee,
+                        summary.perpId,
+                        canSettle
+                    );
+                    quoteBalance.amount += canSettle;
+                }
+            }
+        }
+
+        insurance = perpEngine.socializeSubaccount(liquidatee, insurance);
+
+        // we can assure that quoteBalance must be non positive
+        int128 insuranceCover = MathHelper.min(insurance, -quoteBalance.amount);
+        if (insuranceCover > 0) {
+            insurance -= insuranceCover;
+            deltas = new IProductEngine.ProductDelta[](1);
+            deltas[0] = IProductEngine.ProductDelta({
+                productId: QUOTE_PRODUCT_ID,
+                subaccount: liquidatee,
+                amountDelta: insuranceCover,
+                vQuoteDelta: 0
+            });
+            spotEngine.applyDeltas(deltas);
+        }
+        if (insurance == 0) {
+            spotEngine.socializeSubaccount(liquidatee);
+        }
+        insurance += lastLiquidationFees;
+    }
+
+    function liquidateSubaccountImpl(IEndpoint.LiquidateSubaccount calldata txn)
+        external
+    {
         require(txn.sender != txn.liquidatee, ERR_UNAUTHORIZED);
+
         require(isUnderMaintenance(txn.liquidatee), ERR_NOT_LIQUIDATABLE);
 
         ISpotEngine spotEngine = ISpotEngine(
@@ -81,23 +338,15 @@ contract FClearinghouse is Clearinghouse, ClearinghouseLiq {
             address(fees)
         );
 
-        return
+        if (
             getHealthFromClearinghouse(
                 txn.liquidatee,
                 IProductEngine.HealthType.INITIAL
-            ) >= 0;
-    }
+            ) >= 0
+        ) {
+            return;
+        }
 
-    function liqFinalizeSubaccount(IEndpoint.LiquidateSubaccount calldata txn)
-        public
-        returns (bool)
-    {
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
         if (txn.healthGroup == type(uint32).max) {
             finalizeSubaccount(
                 spotEngine,
@@ -105,24 +354,14 @@ contract FClearinghouse is Clearinghouse, ClearinghouseLiq {
                 txn.sender,
                 txn.liquidatee
             );
-            return true;
+            return;
         }
-        return false;
-    }
-
-    function liqSettleAgainstLiquidator(
-        IEndpoint.LiquidateSubaccount calldata txn
-    ) public {
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
 
         int128 amountToLiquidate = txn.amount;
         bool isLiability = (txn.mode !=
             uint8(IEndpoint.LiquidationMode.PERP)) && (amountToLiquidate < 0);
+
+        IProductEngine.ProductDelta[] memory deltas;
 
         if (isLiability) {
             // check whether liabilities can be liquidated and settle
@@ -162,22 +401,6 @@ contract FClearinghouse is Clearinghouse, ClearinghouseLiq {
                 }
             }
         }
-    }
-
-    function liqLiquidationPayment(IEndpoint.LiquidateSubaccount calldata txn)
-        public
-    {
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
-        int128 amountToLiquidate = txn.amount;
-        bool isLiability = (txn.mode !=
-            uint8(IEndpoint.LiquidationMode.PERP)) && (amountToLiquidate < 0);
-
-        IProductEngine.ProductDelta[] memory deltas;
 
         HealthGroupSummary memory summary = describeHealthGroup(
             spotEngine,

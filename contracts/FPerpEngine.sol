@@ -16,21 +16,28 @@ contract FPerpEngine is PerpEngine {
 
     function setBalance(
         uint32 productId,
-        uint64 subaccountId,
+        bytes32 subaccount,
         Balance calldata balance
     ) public {
-        balances[productId][subaccountId] = balance;
+        balances[productId][subaccount] = balance;
     }
 
     function setLpBalance(
         uint32 productId,
-        uint64 subaccountId,
+        bytes32 subaccount,
         LpBalance calldata lpBalance
     ) public {
-        lpBalances[productId][subaccountId] = lpBalance;
+        lpBalances[productId][subaccount] = lpBalance;
     }
 
-    function setMarkPrice(uint32 productId, int256 markPriceX18) public {
-        markPrices[productId] = markPriceX18;
+    function perpPositionClosed(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (bool)
+    {
+        return
+            lpBalances[productId][subaccount].amount == 0 &&
+            balances[productId][subaccount].amount == 0 &&
+            balances[productId][subaccount].vQuoteBalance != 0;
     }
 }

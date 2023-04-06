@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-import "prb-math/contracts/PRBMathSD59x18.sol";
 import "./common/Constants.sol";
 import "./common/Errors.sol";
 import "./interfaces/IOffchainBook.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./libraries/MathHelper.sol";
+import "./libraries/MathSD21x18.sol";
 import "./BaseEngine.sol";
 import "./SpotEngineState.sol";
 import "./SpotEngineLP.sol";
+import "./Version.sol";
 
-contract SpotEngine is SpotEngineLP {
-    using PRBMathSD59x18 for int256;
+contract SpotEngine is SpotEngineLP, Version {
+    using MathSD21x18 for int128;
 
     function initialize(
         address _clearinghouse,
@@ -34,9 +35,10 @@ contract SpotEngine is SpotEngineLP {
         states[QUOTE_PRODUCT_ID] = State({
             cumulativeDepositsMultiplierX18: ONE,
             cumulativeBorrowsMultiplierX18: ONE,
-            totalDepositsNormalizedX18: 0,
-            totalBorrowsNormalizedX18: 0
+            totalDepositsNormalized: 0,
+            totalBorrowsNormalized: 0
         });
+        withdrawFees[QUOTE_PRODUCT_ID] = 1e16;
         productIds.push(QUOTE_PRODUCT_ID);
         emit AddProduct(QUOTE_PRODUCT_ID);
     }
@@ -53,6 +55,21 @@ contract SpotEngine is SpotEngineLP {
         return configs[productId];
     }
 
+    function getWithdrawFee(uint32 productId) external view returns (int128) {
+        return withdrawFees[productId];
+    }
+
+    function setWithdrawFee(uint32 productId, int128 withdrawFee)
+        public
+        onlyOwner
+    {
+        if (productId == QUOTE_PRODUCT_ID) {
+            withdrawFees[QUOTE_PRODUCT_ID] = 1e16;
+        } else {
+            withdrawFees[productId] = withdrawFee;
+        }
+    }
+
     /**
      * Actions
      */
@@ -61,9 +78,11 @@ contract SpotEngine is SpotEngineLP {
     function addProduct(
         uint32 healthGroup,
         address book,
-        int256 sizeIncrement,
-        int256 priceIncrementX18,
-        int256 lpSpreadX18,
+        int128 sizeIncrement,
+        int128 priceIncrementX18,
+        int128 minSize,
+        int128 lpSpreadX18,
+        int128 withdrawFee,
         Config calldata config,
         IClearinghouseState.RiskStore calldata riskStore
     ) public onlyOwner {
@@ -78,6 +97,7 @@ contract SpotEngine is SpotEngineLP {
             book,
             sizeIncrement,
             priceIncrementX18,
+            minSize,
             lpSpreadX18
         );
 
@@ -85,53 +105,45 @@ contract SpotEngine is SpotEngineLP {
         states[productId] = State({
             cumulativeDepositsMultiplierX18: ONE,
             cumulativeBorrowsMultiplierX18: ONE,
-            totalDepositsNormalizedX18: 0,
-            totalBorrowsNormalizedX18: 0
+            totalDepositsNormalized: 0,
+            totalBorrowsNormalized: 0
         });
+
+        withdrawFees[productId] = withdrawFee;
 
         lpStates[productId] = LpState({
             supply: 0,
-            quote: Balance({amountX18: 0, lastCumulativeMultiplierX18: ONE}),
-            base: Balance({amountX18: 0, lastCumulativeMultiplierX18: ONE})
+            quote: Balance({amount: 0, lastCumulativeMultiplierX18: ONE}),
+            base: Balance({amount: 0, lastCumulativeMultiplierX18: ONE})
         });
     }
 
-    /// @notice changes the configs of a product, if a new book is provided
-    /// also clears the book
-    //    function changeProductConfigs(
-    //        uint32 productId,
-    //        int256 sizeIncrement,
-    //        int256 priceIncrementX18,
-    //        address book,
-    //        Config calldata config
-    //    ) public onlyOwner {
-    //        require(
-    //            config.longWeightInitialX18 < config.longWeightMaintenanceX18 &&
-    //                config.shortWeightInitialX18 > config.shortWeightMaintenanceX18,
-    //            ERR_BAD_PRODUCT_CONFIG
-    //        );
-    //        if (book != address(0)) {
-    //            // full wipe
-    //            delete markets[productId];
-    //
-    //            markets[productId] = IOffchainBook(book);
-    //            markets[productId].initialize(
-    //                _clearinghouse,
-    //                this,
-    //                owner(),
-    //                getEndpoint(),
-    //                _fees,
-    //                productId,
-    //                sizeIncrement,
-    //                priceIncrementX18
-    //            );
-    //
-    //            products[productId].config = config;
-    //        } else {
-    //            // we don't update sizeincrement and priceincrement if we aren't also wiping book
-    //            products[productId].config = config;
-    //        }
-    //    }
+    function updateProduct(
+        uint32 productId,
+        int128 sizeIncrement,
+        int128 priceIncrementX18,
+        int128 minSize,
+        int128 lpSpreadX18,
+        int128 withdrawFee,
+        Config calldata config,
+        IClearinghouseState.RiskStore calldata riskStore
+    ) public onlyOwner {
+        require(
+            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
+            ERR_BAD_PRODUCT_CONFIG
+        );
+        markets[productId].modifyConfig(
+            sizeIncrement,
+            priceIncrementX18,
+            minSize,
+            lpSpreadX18
+        );
+
+        withdrawFees[productId] = withdrawFee;
+        configs[productId] = config;
+        _clearinghouse.modifyProductConfig(productId, riskStore);
+    }
 
     /// @notice updates internal balances; given tuples of (product, subaccount, delta)
     /// since tuples aren't a thing in solidity, params specify the transpose
@@ -140,63 +152,78 @@ contract SpotEngine is SpotEngineLP {
 
         // May load the same product multiple times
         for (uint32 i = 0; i < deltas.length; i++) {
-            if (deltas[i].amountDeltaX18 == 0) {
+            if (deltas[i].amountDelta == 0) {
                 continue;
             }
 
             uint32 productId = deltas[i].productId;
-            uint64 subaccountId = deltas[i].subaccountId;
-            int256 amountDeltaX18 = deltas[i].amountDeltaX18;
+            bytes32 subaccount = deltas[i].subaccount;
+            int128 amountDelta = deltas[i].amountDelta;
             State memory state = states[productId];
-            Balance memory balance = balances[productId][subaccountId];
+            BalanceNormalized memory balance = balances[productId][subaccount]
+                .balance;
 
-            _updateBalance(state, balance, amountDeltaX18);
+            _updateBalanceNormalized(state, balance, amountDelta);
 
-            states[productId] = state;
-            balances[productId][subaccountId] = balance;
+            states[productId].totalDepositsNormalized = state
+                .totalDepositsNormalized;
+            states[productId].totalBorrowsNormalized = state
+                .totalBorrowsNormalized;
+
+            balances[productId][subaccount].balance = balance;
 
             emit ProductUpdate(productId);
         }
     }
 
-    function socializeSubaccount(
-        uint64 subaccountId,
-        int256 insuranceX18
-    ) external returns (int256) {
+    function socializeSubaccount(bytes32 subaccount) external {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
-        // if the insurance fund still has value we shouldn't socialize
-        // instead whatever remaining spot should be liquidated
-        if (insuranceX18 > 0) {
-            return insuranceX18;
-        }
-
-        for (uint256 i = 0; i < productIds.length; ++i) {
+        for (uint128 i = 0; i < productIds.length; ++i) {
             uint32 productId = productIds[i];
             (State memory state, Balance memory balance) = getStateAndBalance(
                 productId,
-                subaccountId
+                subaccount
             );
-            if (balance.amountX18 < 0) {
-                int256 totalDepositedX18 = state.totalDepositsNormalizedX18.mul(
+            if (balance.amount < 0) {
+                int128 totalDeposited = state.totalDepositsNormalized.mul(
                     state.cumulativeDepositsMultiplierX18
                 );
 
-                state.cumulativeDepositsMultiplierX18 = (totalDepositedX18 +
-                    balance.amountX18).div(state.totalDepositsNormalizedX18);
+                state.cumulativeDepositsMultiplierX18 = (totalDeposited +
+                    balance.amount).div(state.totalDepositsNormalized);
 
-                emit SocializeProduct(productId, -balance.amountX18);
+                emit SocializeProduct(productId, -balance.amount);
 
-                state.totalBorrowsNormalizedX18 -= balance.amountX18.div(
+                state.totalBorrowsNormalized += balance.amount.div(
                     state.cumulativeBorrowsMultiplierX18
                 );
-                balance.amountX18 = 0;
 
-                balances[productId][subaccountId] = balance;
+                balances[productId][subaccount].balance.amountNormalized = 0;
                 states[productId] = state;
             }
         }
+    }
 
-        return insuranceX18;
+    function manualAssert(
+        int128[] calldata totalDeposits,
+        int128[] calldata totalBorrows
+    ) external view {
+        for (uint128 i = 0; i < productIds.length; ++i) {
+            uint32 productId = productIds[i];
+            State memory state = states[productId];
+            require(
+                state.totalDepositsNormalized.mul(
+                    state.cumulativeDepositsMultiplierX18
+                ) == totalDeposits[i],
+                ERR_DSYNC
+            );
+            require(
+                state.totalBorrowsNormalized.mul(
+                    state.cumulativeBorrowsMultiplierX18
+                ) == totalBorrows[i],
+                ERR_DSYNC
+            );
+        }
     }
 }

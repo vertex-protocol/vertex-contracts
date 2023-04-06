@@ -6,43 +6,59 @@ import "./IProductEngine.sol";
 interface ISpotEngine is IProductEngine {
     struct Config {
         address token;
-        int256 interestInflectionUtilX18;
-        int256 interestFloorX18;
-        int256 interestSmallCapX18;
-        int256 interestLargeCapX18;
+        int128 interestInflectionUtilX18;
+        int128 interestFloorX18;
+        int128 interestSmallCapX18;
+        int128 interestLargeCapX18;
     }
 
     struct State {
-        int256 cumulativeDepositsMultiplierX18;
-        int256 cumulativeBorrowsMultiplierX18;
-        int256 totalDepositsNormalizedX18;
-        int256 totalBorrowsNormalizedX18;
+        int128 cumulativeDepositsMultiplierX18;
+        int128 cumulativeBorrowsMultiplierX18;
+        int128 totalDepositsNormalized;
+        int128 totalBorrowsNormalized;
     }
 
     struct Balance {
-        int256 amountX18;
-        int256 lastCumulativeMultiplierX18;
+        int128 amount;
+        int128 lastCumulativeMultiplierX18;
+    }
+
+    struct BalanceNormalized {
+        int128 amountNormalized;
     }
 
     struct LpState {
-        int256 supply;
+        int128 supply;
         Balance quote;
         Balance base;
     }
 
     struct LpBalance {
-        int256 amountX18;
+        int128 amount;
     }
 
-    function getStateAndBalance(
-        uint32 productId,
-        uint64 subaccountId
-    ) external view returns (State memory, Balance memory);
+    struct Balances {
+        BalanceNormalized balance;
+        LpBalance lpBalance;
+    }
 
-    function getStatesAndBalances(
-        uint32 productId,
-        uint64 subaccountId
-    )
+    function getStateAndBalance(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (State memory, Balance memory);
+
+    function getBalance(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (Balance memory);
+
+    function hasBalance(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (bool);
+
+    function getStatesAndBalances(uint32 productId, bytes32 subaccount)
         external
         view
         returns (
@@ -52,5 +68,26 @@ interface ISpotEngine is IProductEngine {
             Balance memory
         );
 
+    function getBalances(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (LpBalance memory, Balance memory);
+
+    function getLpState(uint32 productId)
+        external
+        view
+        returns (LpState memory);
+
     function getConfig(uint32 productId) external view returns (Config memory);
+
+    function getWithdrawFee(uint32 productId) external view returns (int128);
+
+    function updateStates(uint128 dt) external;
+
+    function manualAssert(
+        int128[] calldata totalDeposits,
+        int128[] calldata totalBorrows
+    ) external view;
+
+    function socializeSubaccount(bytes32 subaccount) external;
 }

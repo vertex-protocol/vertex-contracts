@@ -2,8 +2,9 @@
 pragma solidity ^0.8.0;
 
 import "./clearinghouse/IClearinghouse.sol";
+import "./IVersion.sol";
 
-interface IEndpoint {
+interface IEndpoint is IVersion {
     event SubmitTransactions();
 
     event SubmitSlowModeTransaction(
@@ -17,7 +18,7 @@ interface IEndpoint {
         LiquidateSubaccount,
         DepositCollateral,
         WithdrawCollateral,
-        UpdateTime,
+        SpotTick,
         UpdatePrice,
         SettlePnl,
         MatchOrders,
@@ -27,7 +28,11 @@ interface IEndpoint {
         BurnLp,
         SwapAMM,
         MatchOrderAMM,
-        DumpFees
+        DumpFees,
+        ClaimSequencerFee,
+        PerpTick,
+        ManualAssert,
+        Rebate
     }
 
     /// requires signature from sender
@@ -38,12 +43,11 @@ interface IEndpoint {
     }
 
     struct LiquidateSubaccount {
-        address sender;
-        string subaccountName;
-        uint64 liquidateeId;
+        bytes32 sender;
+        bytes32 liquidatee;
         uint8 mode;
         uint32 healthGroup;
-        int256 amount;
+        int128 amount;
         uint64 nonce;
     }
 
@@ -53,10 +57,9 @@ interface IEndpoint {
     }
 
     struct DepositCollateral {
-        address sender;
-        string subaccountName;
+        bytes32 sender;
         uint32 productId;
-        uint256 amount;
+        uint128 amount;
     }
 
     struct SignedDepositCollateral {
@@ -65,10 +68,9 @@ interface IEndpoint {
     }
 
     struct WithdrawCollateral {
-        address sender;
-        string subaccountName;
+        bytes32 sender;
         uint32 productId;
-        uint256 amount;
+        uint128 amount;
         uint64 nonce;
     }
 
@@ -78,12 +80,11 @@ interface IEndpoint {
     }
 
     struct MintLp {
-        address sender;
-        string subaccountName;
+        bytes32 sender;
         uint32 productId;
-        uint256 amountBase;
-        uint256 quoteAmountLow;
-        uint256 quoteAmountHigh;
+        uint128 amountBase;
+        uint128 quoteAmountLow;
+        uint128 quoteAmountHigh;
         uint64 nonce;
     }
 
@@ -93,10 +94,9 @@ interface IEndpoint {
     }
 
     struct BurnLp {
-        address sender;
-        string subaccountName;
+        bytes32 sender;
         uint32 productId;
-        uint256 amount;
+        uint128 amount;
         uint64 nonce;
     }
 
@@ -106,45 +106,47 @@ interface IEndpoint {
     }
 
     /// callable by endpoint; no signature verifications needed
-    struct UpdateTime {
-        uint256 time;
-        uint8 updateMask;
+    struct PerpTick {
+        uint128 time;
+        int128[] avgPriceDiffs;
+    }
+
+    struct SpotTick {
+        uint128 time;
+    }
+
+    struct ManualAssert {
+        int128[] openInterests;
+        int128[] totalDeposits;
+        int128[] totalBorrows;
+    }
+
+    struct Rebate {
+        bytes32[] subaccounts;
+        int128[] amounts;
     }
 
     struct UpdatePrice {
         uint32 productId;
-        int256 priceX18;
+        int128 priceX18;
     }
 
     struct SettlePnl {
-        uint64[] subaccountIds;
+        bytes32[] subaccounts;
+        uint256[] productIds;
     }
 
     /// matching
     struct Order {
-        address sender;
-        string subaccountName;
-        int256 priceX18;
-        int256 amount;
+        bytes32 sender;
+        int128 priceX18;
+        int128 amount;
         uint64 expiration;
         uint64 nonce;
     }
 
     struct SignedOrder {
         Order order;
-        bytes signature;
-    }
-
-    struct Cancellation {
-        address sender;
-        string subaccountName;
-        uint32[] productIds;
-        bytes32[] digests;
-        uint64 nonce;
-    }
-
-    struct SignedCancellation {
-        Cancellation cancellation;
         bytes signature;
     }
 
@@ -162,16 +164,14 @@ interface IEndpoint {
     }
 
     struct SwapAMM {
-        address sender;
-        string subaccountName;
+        bytes32 sender;
         uint32 productId;
-        int256 amount;
-        int256 priceX18;
+        int128 amount;
+        int128 priceX18;
     }
 
     struct DepositInsurance {
-        address sender;
-        uint256 amount;
+        uint128 amount;
     }
 
     struct SignedDepositInsurance {
@@ -191,32 +191,43 @@ interface IEndpoint {
         uint64 txUpTo;
     }
 
-    struct DumpFees {
-        uint32 productId;
+    struct Prices {
+        int128 spotPriceX18;
+        int128 perpPriceX18;
     }
 
     function depositCollateral(
-        string calldata subaccountName,
+        bytes12 subaccountName,
         uint32 productId,
-        uint256 amount
+        uint128 amount
     ) external;
-
-    function depositInsurance(uint256 amount) external;
 
     function setBook(uint32 productId, address book) external;
 
-    function submitTransactions(
+    function submitTransactionsChecked(
         uint64 idx,
         bytes[] calldata transactions
     ) external;
 
     function submitSlowModeTransaction(bytes calldata transaction) external;
 
-    function getPriceX18(uint32 productId) external view returns (int256);
+    function getPriceX18(uint32 productId) external view returns (int128);
 
-    function setPriceX18(uint32 productId, int256 priceX18) external;
+    function getPricesX18(uint32 healthGroup)
+        external
+        view
+        returns (Prices memory);
 
-    function getTime() external view returns (uint256);
+    function getTime() external view returns (uint128);
 
     function getNonce(address sender) external view returns (uint64);
+
+    function getNumSubaccounts() external view returns (uint64);
+
+    function getSubaccountId(bytes32 subaccount) external view returns (uint64);
+
+    function getSubaccountById(uint64 subaccountId)
+        external
+        view
+        returns (bytes32);
 }

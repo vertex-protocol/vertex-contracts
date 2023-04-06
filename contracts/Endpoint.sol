@@ -11,19 +11,34 @@ import "./EndpointGated.sol";
 import "./common/Errors.sol";
 import "./libraries/ERC20Helper.sol";
 import "./interfaces/IEndpoint.sol";
+import "./libraries/Logger.sol";
 import "./interfaces/engine/ISpotEngine.sol";
+import "./interfaces/engine/IPerpEngine.sol";
 import "./interfaces/IERC20Base.sol";
+import "./Version.sol";
 
-contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
+interface ISanctionsList {
+    function isSanctioned(address addr) external view returns (bool);
+}
+
+contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
     using ERC20Helper for IERC20Base;
 
+    IERC20Base private quote;
     IClearinghouse public clearinghouse;
-    address sequencer;
-    uint256 private time;
+    ISpotEngine private spotEngine;
+    IPerpEngine private perpEngine;
+    ISanctionsList private sanctions;
 
-    // engine -> last time updateStates was called
-    mapping(address => uint256) lastUpdated;
-    mapping(uint32 => int256) prices;
+    address sequencer;
+    int128 sequencerFees;
+
+    mapping(bytes32 => uint64) subaccountIds;
+    mapping(uint64 => bytes32) subaccounts;
+    uint64 numSubaccounts;
+
+    // healthGroup -> (spotPriceX18, perpPriceX18)
+    mapping(uint32 => Prices) pricesX18;
     mapping(uint32 => address) books;
     mapping(address => uint64) nonces;
 
@@ -32,80 +47,185 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     SlowModeConfig public slowModeConfig;
     mapping(uint64 => SlowModeTx) public slowModeTxs;
 
+    struct Times {
+        uint128 perpTime;
+        uint128 spotTime;
+    }
+
+    Times private times;
+
+    mapping(uint32 => int128) sequencerFee;
+
     string constant LIQUIDATE_SUBACCOUNT_SIGNATURE =
-        "LiquidateSubaccount(address sender,string subaccountName,uint64 liquidateeId,uint8 mode,uint32 healthGroup,int256 amount,uint64 nonce)";
+        "LiquidateSubaccount(bytes32 sender,bytes32 liquidatee,uint8 mode,uint32 healthGroup,int128 amount,uint64 nonce)";
     string constant WITHDRAW_COLLATERAL_SIGNATURE =
-        "WithdrawCollateral(address sender,string subaccountName,uint32 productId,uint256 amount,uint64 nonce)";
-    string constant DEPOSIT_INSURANCE_SIGNATURE =
-        "DepositInsurance(address sender,uint256 amount,uint64 nonce)";
+        "WithdrawCollateral(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
     string constant MINT_LP_SIGNATURE =
-        "MintLp(address sender,string subaccountName,uint32 productId,uint256 amountBase,uint256 quoteAmountLow,uint256 quoteAmountHigh,uint64 nonce)";
+        "MintLp(bytes32 sender,uint32 productId,uint128 amountBase,uint128 quoteAmountLow,uint128 quoteAmountHigh,uint64 nonce)";
     string constant BURN_LP_SIGNATURE =
-        "BurnLp(address sender,string subaccountName,uint32 productId,uint256 amount,uint64 nonce)";
+        "BurnLp(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
 
     function initialize(
+        address _sanctions,
         address _sequencer,
         IClearinghouse _clearinghouse,
         uint64 slowModeTimeout,
-        uint256 _time,
-        int256[] memory _prices
+        uint128 _time,
+        int128[] memory _prices
     ) external initializer {
         __Ownable_init();
         __EIP712_init("Vertex", "0.0.1");
         sequencer = _sequencer;
         clearinghouse = _clearinghouse;
+        sanctions = ISanctionsList(_sanctions);
+
+        spotEngine = ISpotEngine(
+            clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
+        );
+
+        perpEngine = IPerpEngine(
+            clearinghouse.getEngineByType(IProductEngine.EngineType.PERP)
+        );
+
+        quote = IERC20Base(clearinghouse.getQuote());
+
         slowModeConfig = SlowModeConfig({
             timeout: slowModeTimeout,
             txCount: 0,
             txUpTo: 0
         });
-        time = _time;
-        for (uint32 i = 0; i < _prices.length; i++) {
-            prices[i + 1] = _prices[i];
+        times = Times({perpTime: _time, spotTime: _time});
+        for (uint32 i = 0; i < _prices.length; i += 2) {
+            pricesX18[i / 2].spotPriceX18 = _prices[i];
+            pricesX18[i / 2].perpPriceX18 = _prices[i + 1];
         }
     }
 
-    function validateNonce(address sender, uint64 nonce) internal {
-        require(nonce == nonces[sender]++, "Invalid nonce");
+    // NOTE: we want DepositCollateral to be the first action anybody takes on Vertex
+    // so we can record the existence of their subaccount on-chain
+    // unfortunately, there are some edge cases where an empty account can place an order
+    // or do an AMM swap that passes health checks without going through a deposit, so
+    // we block those functions unless there has been a deposit first
+    function _recordSubaccount(bytes32 subaccount) internal {
+        if (subaccountIds[subaccount] == 0) {
+            subaccountIds[subaccount] = ++numSubaccounts;
+            subaccounts[numSubaccounts] = subaccount;
+        }
+    }
+
+    function requireSubaccount(bytes32 subaccount) public view {
+        require(subaccountIds[subaccount] != 0, ERR_REQUIRES_DEPOSIT);
+    }
+
+    function getNumSubaccounts() external view returns (uint64) {
+        return numSubaccounts;
+    }
+
+    function getSubaccountId(bytes32 subaccount)
+        external
+        view
+        returns (uint64)
+    {
+        return subaccountIds[subaccount];
+    }
+
+    function getSubaccountById(uint64 subaccountId)
+        external
+        view
+        returns (bytes32)
+    {
+        return subaccounts[subaccountId];
+    }
+
+    function validateNonce(bytes32 sender, uint64 nonce) internal virtual {
+        require(
+            nonce == nonces[address(uint160(bytes20(sender)))]++,
+            "Invalid nonce"
+        );
+    }
+
+    function chargeFee(bytes32 sender, int128 fee) internal {
+        chargeFee(sender, fee, QUOTE_PRODUCT_ID);
+    }
+
+    function chargeFee(
+        bytes32 sender,
+        int128 fee,
+        uint32 productId
+    ) internal {
+        IProductEngine.ProductDelta[]
+            memory deltas = IProductEngine.ProductDelta[](
+                new IProductEngine.ProductDelta[](1)
+            );
+
+        deltas[0] = IProductEngine.ProductDelta({
+            productId: productId,
+            subaccount: sender,
+            amountDelta: -fee,
+            vQuoteDelta: 0
+        });
+
+        sequencerFee[productId] += fee;
+        spotEngine.applyDeltas(deltas);
     }
 
     function validateSignature(
-        address signer,
+        bytes32 sender,
         bytes32 digest,
         bytes memory signature
     ) internal view virtual {
         address recovered = ECDSA.recover(digest, signature);
         require(
-            (recovered != address(0)) && (recovered == signer),
+            (recovered != address(0)) &&
+                (recovered == address(uint160(bytes20(sender)))),
             ERR_INVALID_SIGNATURE
         );
+    }
+
+    function increaseAllowance(
+        IERC20Base token,
+        address to,
+        uint256 amount
+    ) internal virtual {
+        token.increaseAllowance(to, amount);
+    }
+
+    function safeTransferFrom(
+        IERC20Base token,
+        address from,
+        uint256 amount
+    ) internal virtual {
+        token.safeTransferFrom(from, address(this), amount);
     }
 
     function handleDepositTransfer(
         IERC20Base token,
         address from,
         uint256 amount
-    ) internal virtual {
-        token.increaseAllowance(address(clearinghouse), amount);
-        token.safeTransferFrom(from, address(this), amount);
+    ) internal {
+        increaseAllowance(token, address(clearinghouse), amount);
+        safeTransferFrom(token, from, amount);
     }
 
-    function validateSender(address txSender, address sender) internal view {
+    function validateSender(bytes32 txSender, address sender) internal view {
         require(
-            txSender == sender || txSender == address(this),
+            address(uint160(bytes20(txSender))) == sender ||
+                sender == address(this),
             "cannot send slow mode transaction for another address"
         );
     }
 
     function depositCollateral(
-        string calldata subaccountName,
+        bytes12 subaccountName,
         uint32 productId,
-        uint256 amount
+        uint128 amount
     ) external {
-        require(bytes(subaccountName).length <= 12, ERR_LONG_NAME);
+        bytes32 subaccount = bytes32(
+            abi.encodePacked(msg.sender, subaccountName)
+        );
+
         DepositCollateral memory txn = DepositCollateral({
-            sender: msg.sender,
-            subaccountName: subaccountName,
+            sender: subaccount,
             productId: productId,
             amount: amount
         });
@@ -119,19 +239,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         this.submitSlowModeTransaction(transaction);
     }
 
-    function depositInsurance(uint256 amount) external {
-        DepositInsurance memory txn = DepositInsurance({
-            sender: msg.sender,
-            amount: amount
-        });
-
-        bytes memory encodedTx = abi.encode(txn);
-        bytes memory transaction = abi.encodePacked(
-            uint8(TransactionType.DepositInsurance),
-            encodedTx
-        );
-
-        this.submitSlowModeTransaction(transaction);
+    function requireUnsanctioned(address sender) internal view virtual {
+        require(!sanctions.isSanctioned(sender), "wallet has been sanctioned");
     }
 
     function submitSlowModeTransaction(bytes calldata transaction) external {
@@ -150,41 +259,36 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (DepositCollateral)
             );
-            sender = txn.sender;
-            validateSender(msg.sender, sender);
-            // TODO: probably save spotEngine in state directly
-            // so the gas is less retarded
-            ISpotEngine spotEngine = ISpotEngine(
-                clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
-            );
+            validateSender(txn.sender, sender);
+            sender = address(uint160(bytes20(txn.sender)));
             // transfer tokens from tx sender to here
             IERC20Base token = IERC20Base(
                 spotEngine.getConfig(txn.productId).token
             );
-            handleDepositTransfer(token, sender, txn.amount);
+            require(address(token) != address(0));
+            handleDepositTransfer(token, sender, uint256(txn.amount));
         } else if (txType == TransactionType.DepositInsurance) {
             DepositInsurance memory txn = abi.decode(
                 transaction[1:],
                 (DepositInsurance)
             );
-            sender = txn.sender;
-            validateSender(msg.sender, sender);
-            ISpotEngine spotEngine = ISpotEngine(
-                clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
-            );
             IERC20Base token = IERC20Base(clearinghouse.getQuote());
-            handleDepositTransfer(token, sender, txn.amount);
+            require(address(token) != address(0));
+            handleDepositTransfer(token, sender, uint256(txn.amount));
+        } else {
+            safeTransferFrom(quote, sender, uint256(int256(SLOW_MODE_FEE)));
+            sequencerFees += SLOW_MODE_FEE;
         }
 
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
         uint64 executableAt = uint64(block.timestamp) + _slowModeConfig.timeout;
+        requireUnsanctioned(sender);
         slowModeTxs[_slowModeConfig.txCount++] = SlowModeTx({
             executableAt: executableAt,
             sender: sender,
             tx: transaction
         });
         // TODO: to save on costs we could potentially just emit something
-
         // for now, we can just create a separate loop in the engine that queries the remote
         // sequencer for slow mode transactions, and ignore the possibility of a reorgy attack
         slowModeConfig = _slowModeConfig;
@@ -209,8 +313,31 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         );
 
         try this.processSlowModeTransaction(txn.sender, txn.tx) {} catch {
-            try this.processSlowModeTransaction(txn.sender, txn.tx) {} catch {}
+            try this.tryReturnFunds(txn.tx) {} catch {}
         }
+    }
+
+    function tryReturnFunds(bytes calldata transaction) public {
+        require(
+            msg.sender == address(this),
+            "only callable to execute slow mode txs"
+        );
+        TransactionType txType = TransactionType(uint8(transaction[0]));
+        if (txType == TransactionType.DepositCollateral) {
+            DepositCollateral memory txn = abi.decode(
+                transaction[1:],
+                (DepositCollateral)
+            );
+            IERC20Base token = IERC20Base(
+                spotEngine.getConfig(txn.productId).token
+            );
+            token.decreaseAllowance(address(clearinghouse), txn.amount);
+            token.safeTransfer(
+                address(uint160(bytes20(txn.sender))),
+                uint256(txn.amount)
+            );
+        }
+        // NOTE: no need to return funds on DepositInsurance; its really only meant for us
     }
 
     function executeSlowModeTransactions(uint32 count) external {
@@ -244,6 +371,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (LiquidateSubaccount)
             );
             validateSender(txn.sender, sender);
+            requireSubaccount(txn.sender);
             clearinghouse.liquidateSubaccount(txn);
         } else if (txType == TransactionType.DepositCollateral) {
             DepositCollateral memory txn = abi.decode(
@@ -251,6 +379,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (DepositCollateral)
             );
             validateSender(txn.sender, sender);
+            _recordSubaccount(txn.sender);
             clearinghouse.depositCollateral(txn);
         } else if (txType == TransactionType.WithdrawCollateral) {
             WithdrawCollateral memory txn = abi.decode(
@@ -267,7 +396,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (DepositInsurance)
             );
-            validateSender(txn.sender, sender);
             clearinghouse.depositInsurance(txn);
         } else if (txType == TransactionType.MintLp) {
             MintLp memory txn = abi.decode(transaction[1:], (MintLp));
@@ -280,6 +408,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         } else if (txType == TransactionType.SwapAMM) {
             SwapAMM memory txn = abi.decode(transaction[1:], (SwapAMM));
             validateSender(txn.sender, sender);
+            requireSubaccount(txn.sender);
             IOffchainBook(books[txn.productId]).swapAMM(txn);
         } else {
             revert("Invalid transaction type");
@@ -293,13 +422,13 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (SignedLiquidateSubaccount)
             );
+            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
                         keccak256(bytes(LIQUIDATE_SUBACCOUNT_SIGNATURE)),
                         signedTx.tx.sender,
-                        keccak256(bytes(signedTx.tx.subaccountName)),
-                        signedTx.tx.liquidateeId,
+                        signedTx.tx.liquidatee,
                         signedTx.tx.mode,
                         signedTx.tx.healthGroup,
                         signedTx.tx.amount,
@@ -307,59 +436,71 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                     )
                 )
             );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             validateSignature(signedTx.tx.sender, digest, signedTx.signature);
+            requireSubaccount(signedTx.tx.sender);
+            chargeFee(signedTx.tx.sender, LIQUIDATION_FEE);
             clearinghouse.liquidateSubaccount(signedTx.tx);
         } else if (txType == TransactionType.WithdrawCollateral) {
             SignedWithdrawCollateral memory signedTx = abi.decode(
                 transaction[1:],
                 (SignedWithdrawCollateral)
             );
+            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
                         keccak256(bytes(WITHDRAW_COLLATERAL_SIGNATURE)),
                         signedTx.tx.sender,
-                        keccak256(bytes(signedTx.tx.subaccountName)),
                         signedTx.tx.productId,
                         signedTx.tx.amount,
                         signedTx.tx.nonce
                     )
                 )
             );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             validateSignature(signedTx.tx.sender, digest, signedTx.signature);
+            chargeFee(
+                signedTx.tx.sender,
+                spotEngine.getWithdrawFee(signedTx.tx.productId),
+                signedTx.tx.productId
+            );
             clearinghouse.withdrawCollateral(signedTx.tx);
-        } else if (txType == TransactionType.UpdateTime) {
-            UpdateTime memory txn = abi.decode(transaction[1:], (UpdateTime));
-            time = txn.time;
-            IClearinghouse _clearinghouse = clearinghouse;
-            IProductEngine.EngineType[] memory engineTypes = _clearinghouse
-                .getSupportedEngines();
-            for (uint256 i = 0; i < engineTypes.length; i++) {
-                if ((txn.updateMask >> uint8(engineTypes[i])) & 1 == 1) {
-                    IProductEngine engine = IProductEngine(
-                        _clearinghouse.getEngineByType(engineTypes[i])
-                    );
-                    uint256 dt = txn.time - lastUpdated[address(engine)];
-                    lastUpdated[address(engine)] = txn.time;
-                    engine.updateStates(dt);
-                }
-            }
+        } else if (txType == TransactionType.SpotTick) {
+            SpotTick memory txn = abi.decode(transaction[1:], (SpotTick));
+            Times memory t = times;
+            uint128 dt = txn.time - t.spotTime;
+            spotEngine.updateStates(dt);
+            t.spotTime = txn.time;
+            times = t;
+        } else if (txType == TransactionType.PerpTick) {
+            PerpTick memory txn = abi.decode(transaction[1:], (PerpTick));
+            Times memory t = times;
+            uint128 dt = txn.time - t.perpTime;
+            perpEngine.updateStates(dt, txn.avgPriceDiffs);
+            t.perpTime = txn.time;
+            times = t;
         } else if (txType == TransactionType.UpdatePrice) {
             UpdatePrice memory txn = abi.decode(transaction[1:], (UpdatePrice));
-            this.setPriceX18(txn.productId, txn.priceX18);
+            require(txn.priceX18 > 0, ERR_INVALID_PRICE);
+            uint32 healthGroup = _getHealthGroup(txn.productId);
+            if (txn.productId % 2 == 1) {
+                pricesX18[healthGroup].spotPriceX18 = txn.priceX18;
+            } else {
+                pricesX18[healthGroup].perpPriceX18 = txn.priceX18;
+            }
         } else if (txType == TransactionType.SettlePnl) {
             SettlePnl memory txn = abi.decode(transaction[1:], (SettlePnl));
             clearinghouse.settlePnl(txn);
         } else if (txType == TransactionType.MatchOrders) {
             MatchOrders memory txn = abi.decode(transaction[1:], (MatchOrders));
+            requireSubaccount(txn.taker.order.sender);
+            requireSubaccount(txn.maker.order.sender);
             IOffchainBook(books[txn.productId]).matchOrders(txn);
         } else if (txType == TransactionType.MatchOrderAMM) {
             MatchOrderAMM memory txn = abi.decode(
                 transaction[1:],
                 (MatchOrderAMM)
             );
+            requireSubaccount(txn.taker.order.sender);
             IOffchainBook(books[txn.productId]).matchOrderAMM(txn);
         } else if (txType == TransactionType.ExecuteSlowMode) {
             SlowModeConfig memory _slowModeConfig = slowModeConfig;
@@ -370,12 +511,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (SignedMintLp)
             );
+            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
                         keccak256(bytes(MINT_LP_SIGNATURE)),
                         signedTx.tx.sender,
-                        keccak256(bytes(signedTx.tx.subaccountName)),
                         signedTx.tx.productId,
                         signedTx.tx.amountBase,
                         signedTx.tx.quoteAmountLow,
@@ -384,43 +525,85 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                     )
                 )
             );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             validateSignature(signedTx.tx.sender, digest, signedTx.signature);
+            chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
             clearinghouse.mintLp(signedTx.tx);
         } else if (txType == TransactionType.BurnLp) {
             SignedBurnLp memory signedTx = abi.decode(
                 transaction[1:],
                 (SignedBurnLp)
             );
+            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
                         keccak256(bytes(BURN_LP_SIGNATURE)),
                         signedTx.tx.sender,
-                        keccak256(bytes(signedTx.tx.subaccountName)),
                         signedTx.tx.productId,
                         signedTx.tx.amount,
                         signedTx.tx.nonce
                     )
                 )
             );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             validateSignature(signedTx.tx.sender, digest, signedTx.signature);
+            chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
             clearinghouse.burnLp(signedTx.tx);
         } else if (txType == TransactionType.DumpFees) {
-            DumpFees memory txn = abi.decode(transaction[1:], (DumpFees));
-            IOffchainBook(books[txn.productId]).dumpFees();
+            uint32 numProducts = clearinghouse.getNumProducts();
+            for (uint32 i = 1; i < numProducts; i++) {
+                IOffchainBook(books[i]).dumpFees();
+            }
+        } else if (txType == TransactionType.ClaimSequencerFee) {
+            uint32 numProducts = clearinghouse.getNumProducts();
+            uint32[] memory spotIds = spotEngine.getProductIds();
+
+            IProductEngine.ProductDelta[]
+                memory deltas = new IProductEngine.ProductDelta[](
+                    spotIds.length
+                );
+
+            for (uint32 i = 1; i < numProducts; i++) {
+                deltas[0].amountDelta += IOffchainBook(books[i])
+                    .claimSequencerFee();
+            }
+
+            bytes32 subaccount = bytes32(
+                abi.encodePacked(sequencer, bytes12(0))
+            );
+
+            for (uint256 i = 0; i < spotIds.length; i++) {
+                deltas[i].productId = spotIds[i];
+                deltas[i].subaccount = subaccount;
+                deltas[i].amountDelta += sequencerFee[spotIds[i]];
+                sequencerFee[spotIds[i]] = 0;
+            }
+
+            spotEngine.applyDeltas(deltas);
+        } else if (txType == TransactionType.ManualAssert) {
+            ManualAssert memory txn = abi.decode(
+                transaction[1:],
+                (ManualAssert)
+            );
+            perpEngine.manualAssert(txn.openInterests);
+            spotEngine.manualAssert(txn.totalDeposits, txn.totalBorrows);
+        } else if (txType == TransactionType.Rebate) {
+            Rebate memory txn = abi.decode(transaction[1:], (Rebate));
+            clearinghouse.rebate(txn);
         } else {
             revert("Invalid transaction type");
         }
     }
 
-    function fSubmitTransactions(bytes[] calldata transactions) external {
+    function requireSequencer() internal view virtual {
         require(
             msg.sender == sequencer,
             "Only the sequencer can submit transactions"
         );
-        for (uint256 i = 0; i < transactions.length; i++) {
+    }
+
+    function submitTransactions(bytes[] calldata transactions) public {
+        requireSequencer();
+        for (uint128 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];
             processTransaction(transaction);
         }
@@ -428,23 +611,33 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         emit SubmitTransactions();
     }
 
-    function submitTransactions(
+    function submitTransactionsChecked(
         uint64 idx,
         bytes[] calldata transactions
     ) external {
+        requireSequencer();
+        require(idx == nSubmissions, "Invalid submission index");
         // TODO: if one of these transactions fails this means the sequencer is in an error state
         // we should probably record this, and engage some sort of recovery mode
-        require(
-            msg.sender == sequencer,
-            "Only the sequencer can submit transactions"
-        );
+        submitTransactions(transactions);
+    }
+
+    function submitTransactionsCheckedWithGasLimit(
+        uint64 idx,
+        bytes[] calldata transactions,
+        uint256 gasLimit
+    ) external returns (uint64, uint256) {
+        uint256 gasUsed = gasleft();
+        requireSequencer();
         require(idx == nSubmissions, "Invalid submission index");
-        for (uint256 i = 0; i < transactions.length; i++) {
+        for (uint128 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];
             processTransaction(transaction);
+            if (gasUsed - gasleft() > gasLimit) {
+                return (uint64(i), gasUsed - gasleft());
+            }
         }
-        nSubmissions += uint64(transactions.length);
-        emit SubmitTransactions();
+        return (uint64(transactions.length), gasUsed - gasleft());
     }
 
     function setBook(uint32 productId, address book) external {
@@ -455,22 +648,44 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         books[productId] = book;
     }
 
-    function getPriceX18(uint32 productId) external view returns (int256) {
-        require(prices[productId] != 0, ERR_INVALID_PRODUCT);
-        return prices[productId];
+    function getBook(uint32 productId) external view returns (address) {
+        return books[productId];
     }
 
-    function setPriceX18(uint32 productId, int256 priceX18) external virtual {
-        require(
-            msg.sender == address(this),
-            "Only the endpoint can set oracle price"
-        );
-        prices[productId] = priceX18;
+    // this is enforced anywhere in addProduct, we generate productId in
+    // the following way.
+    function _getHealthGroup(uint32 productId) internal pure returns (uint32) {
+        require(productId != 0, "product 0 has no health group");
+        return (productId - 1) / 2;
     }
 
-    function getTime() external view returns (uint256) {
-        require(time != 0, "bad timing");
-        return time;
+    function getPriceX18(uint32 productId)
+        public
+        view
+        returns (int128 priceX18)
+    {
+        uint32 healthGroup = _getHealthGroup(productId);
+        if (productId % 2 == 1) {
+            priceX18 = pricesX18[healthGroup].spotPriceX18;
+        } else {
+            priceX18 = pricesX18[healthGroup].perpPriceX18;
+        }
+        require(priceX18 != 0, ERR_INVALID_PRODUCT);
+    }
+
+    function getPricesX18(uint32 healthGroup)
+        external
+        view
+        returns (Prices memory)
+    {
+        return pricesX18[healthGroup];
+    }
+
+    function getTime() external view returns (uint128) {
+        Times memory t = times;
+        uint128 _time = t.spotTime > t.perpTime ? t.spotTime : t.perpTime;
+        require(_time != 0, "bad timing");
+        return _time;
     }
 
     function setSequencer(address _sequencer) external onlyOwner {

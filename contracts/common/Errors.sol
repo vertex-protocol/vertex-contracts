@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
+// Trying to take an action on vertex when
+string constant ERR_REQUIRES_DEPOSIT = "RS";
+
 // ERC20 Transfer failed
 string constant ERR_TRANSFER_FAILED = "TF";
 
@@ -25,11 +28,17 @@ string constant ERR_LIQUIDATED_TOO_MUCH = "LTM";
 // Trying to liquidate quote, or
 string constant ERR_INVALID_LIQUIDATION_PARAMS = "NILP";
 
+// Trying to liquidate perp but the amount is not divisible by sizeIncrement
+string constant ERR_INVALID_LIQUIDATION_AMOUNT = "NILA";
+
 // Tried to liquidate too little, too much or signs are different
 string constant ERR_NOT_LIQUIDATABLE_AMT = "NLA";
 
-// Tried to liquidate liabilities before assets
+// Tried to liquidate liabilities before perps
 string constant ERR_NOT_LIQUIDATABLE_LIABILITIES = "NLL";
+
+// Tried to finalize subaccount that cannot be finalized
+string constant ERR_NOT_FINALIZABLE_SUBACCOUNT = "NFS";
 
 // Not enough quote to settle
 string constant ERR_CANNOT_SETTLE = "CS";
@@ -74,6 +83,17 @@ string constant ERR_INVALID_SIGNATURE = "IS";
 
 string constant ERR_ORDERS_CANNOT_BE_MATCHED = "OCBM";
 
+string constant ERR_INVALID_LP_AMOUNT = "ILA";
+
 string constant ERR_SLIPPAGE_TOO_HIGH = "STH";
 
 string constant ERR_SUBACCOUNT_NOT_FOUND = "SNF";
+
+string constant ERR_INVALID_PRICE = "IPR";
+
+string constant ERR_INVALID_TIME = "ITI";
+
+// states on node and engine are not same
+string constant ERR_DSYNC = "DSYNC";
+
+string constant ERR_INVALID_SWAP_PARAMS = "ISP";
