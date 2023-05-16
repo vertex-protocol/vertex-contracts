@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./IProductEngine.sol";
+import "../clearinghouse/IClearinghouseState.sol";
 
 interface IPerpEngine is IProductEngine {
     struct State {
@@ -31,6 +32,15 @@ interface IPerpEngine is IProductEngine {
         // NOTE: funding payments should be rolled
         // into Balance.vQuoteBalance;
         int128 lastCumulativeFundingX18;
+    }
+
+    struct UpdateProductTx {
+        uint32 productId;
+        int128 sizeIncrement;
+        int128 priceIncrementX18;
+        int128 minSize;
+        int128 lpSpreadX18;
+        IClearinghouseState.RiskStore riskStore;
     }
 
     function getStateAndBalance(uint32 productId, bytes32 subaccount)

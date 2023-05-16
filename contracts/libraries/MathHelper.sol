@@ -104,6 +104,7 @@ library MathHelper {
     }
 
     function floor(int128 x, int128 y) internal pure returns (int128 z) {
+        require(y > 0, "ds-math-floor-neg-mod");
         int128 r = x % y;
         if (r == 0) {
             z = x;
@@ -113,6 +114,7 @@ library MathHelper {
     }
 
     function ceil(int128 x, int128 y) internal pure returns (int128 z) {
+        require(y > 0, "ds-math-ceil-neg-mod");
         int128 r = x % y;
         if (r == 0) {
             z = x;
@@ -182,7 +184,17 @@ library MathHelper {
             (amountSwap < 0 && base + amountSwap < baseAtPrice)
         ) {
             // we hit price limits before we exhaust amountSwap
-            baseSwapped = MathHelper.floor(baseAtPrice - base, sizeIncrement);
+            if (baseAtPrice >= base) {
+                baseSwapped = MathHelper.floor(
+                    baseAtPrice - base,
+                    sizeIncrement
+                );
+            } else {
+                baseSwapped = MathHelper.ceil(
+                    baseAtPrice - base,
+                    sizeIncrement
+                );
+            }
         } else {
             // just swap it all
             // amountSwap is already guaranteed to adhere to sizeIncrement

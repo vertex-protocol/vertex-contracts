@@ -16,13 +16,9 @@ contract FeeCalculator is Initializable, IFeeCalculator, Version {
         uint32 productId,
         bool taker
     ) external pure returns (int128) {
-        require(productId != 0 && productId <= 4, "invalid productId");
+        require(productId != 0 && productId <= 6, "invalid productId");
         if (taker) {
-            if (productId == 1) {
-                return 300_000_000_000_000;
-            } else if (productId == 2) {
-                return 200_000_000_000_000;
-            } else if (productId == 3) {
+            if (productId % 2 == 1) {
                 return 300_000_000_000_000;
             } else {
                 return 200_000_000_000_000;

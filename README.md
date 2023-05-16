@@ -8,7 +8,7 @@ The following assumes the use of `node@>=16`.
 
 ## Install Dependencies
 
-`yarn`
+`yarn install`
 
 ## Compile Contracts
 

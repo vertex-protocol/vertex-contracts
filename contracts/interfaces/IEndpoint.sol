@@ -32,7 +32,12 @@ interface IEndpoint is IVersion {
         ClaimSequencerFee,
         PerpTick,
         ManualAssert,
-        Rebate
+        Rebate,
+        UpdateProduct
+    }
+    struct UpdateProduct {
+        address engine;
+        bytes tx;
     }
 
     /// requires signature from sender

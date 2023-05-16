@@ -9,7 +9,6 @@ import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./interfaces/engine/IProductEngine.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/IOffchainBook.sol";
-import "./libraries/KeyHelper.sol";
 import "./libraries/ERC20Helper.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";

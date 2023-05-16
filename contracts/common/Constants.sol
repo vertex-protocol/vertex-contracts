@@ -13,11 +13,11 @@ int128 constant ONE = 10**18;
 
 uint8 constant MAX_DECIMALS = 18;
 
-int128 constant TAKER_SEQUENCER_FEE = 25e15; // $0.025
+int128 constant TAKER_SEQUENCER_FEE = 4e17; // $0.40
 
 int128 constant SLOW_MODE_FEE = 1000000; // $1
 
-int128 constant LIQUIDATION_FEE = 25e16; // $0.25
-int128 constant HEALTHCHECK_FEE = 1e17; // $0.10
+int128 constant LIQUIDATION_FEE = 1e18; // $1
+int128 constant HEALTHCHECK_FEE = 1e18; // $1
 
-uint64 constant VERSION = 6;
+uint64 constant VERSION = 11;

@@ -31,7 +31,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
     ISanctionsList private sanctions;
 
     address sequencer;
-    int128 sequencerFees;
+    int128 public sequencerFees;
 
     mapping(bytes32 => uint64) subaccountIds;
     mapping(uint64 => bytes32) subaccounts;
@@ -54,7 +54,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     Times private times;
 
-    mapping(uint32 => int128) sequencerFee;
+    mapping(uint32 => int128) public sequencerFee;
 
     string constant LIQUIDATE_SUBACCOUNT_SIGNATURE =
         "LiquidateSubaccount(bytes32 sender,bytes32 liquidatee,uint8 mode,uint32 healthGroup,int128 amount,uint64 nonce)";
@@ -275,13 +275,16 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             IERC20Base token = IERC20Base(clearinghouse.getQuote());
             require(address(token) != address(0));
             handleDepositTransfer(token, sender, uint256(txn.amount));
+        } else if (txType == TransactionType.UpdateProduct) {
+            require(sender == owner(), "only owner can add/update products");
         } else {
             safeTransferFrom(quote, sender, uint256(int256(SLOW_MODE_FEE)));
-            sequencerFees += SLOW_MODE_FEE;
+            sequencerFee[0] += SLOW_MODE_FEE;
         }
 
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
-        uint64 executableAt = uint64(block.timestamp) + _slowModeConfig.timeout;
+        // hardcoded to three days
+        uint64 executableAt = uint64(block.timestamp) + 259200;
         requireUnsanctioned(sender);
         slowModeTxs[_slowModeConfig.txCount++] = SlowModeTx({
             executableAt: executableAt,
@@ -312,7 +315,23 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             "oldest slow mode tx cannot be executed yet"
         );
 
+        uint256 gasRemaining = gasleft();
         try this.processSlowModeTransaction(txn.sender, txn.tx) {} catch {
+            // we need to differentiate between a revert and an out of gas
+            // the expectation is that because 63/64 * gasRemaining is forwarded
+            // we should be able to differentiate based on whether
+            // gasleft() >= gasRemaining / 64. however, experimentally
+            // even more gas can be remaining, and i don't have a clear
+            // understanding as to why. as a result we just err on the
+            // conservative side and provide two conservative
+            // asserts that should cover all cases at the expense of needing
+            // to provide a higher gas limit than necessary
+
+            if (gasleft() <= 100000 || gasleft() <= gasRemaining / 16) {
+                assembly {
+                    invalid()
+                }
+            }
             try this.tryReturnFunds(txn.tx) {} catch {}
         }
     }
@@ -398,9 +417,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             );
             clearinghouse.depositInsurance(txn);
         } else if (txType == TransactionType.MintLp) {
-            MintLp memory txn = abi.decode(transaction[1:], (MintLp));
-            validateSender(txn.sender, sender);
-            clearinghouse.mintLp(txn);
+            // TODO: temporarily disabled; re-enable once better support for LP liquidity on orderbook
+            //            MintLp memory txn = abi.decode(transaction[1:], (MintLp));
+            //            validateSender(txn.sender, sender);
+            //            clearinghouse.mintLp(txn);
         } else if (txType == TransactionType.BurnLp) {
             BurnLp memory txn = abi.decode(transaction[1:], (BurnLp));
             validateSender(txn.sender, sender);
@@ -410,6 +430,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             validateSender(txn.sender, sender);
             requireSubaccount(txn.sender);
             IOffchainBook(books[txn.productId]).swapAMM(txn);
+        } else if (txType == TransactionType.UpdateProduct) {
+            UpdateProduct memory txn = abi.decode(
+                transaction[1:],
+                (UpdateProduct)
+            );
+            IProductEngine(txn.engine).updateProduct(txn.tx);
         } else {
             revert("Invalid transaction type");
         }

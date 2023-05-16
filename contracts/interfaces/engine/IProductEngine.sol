@@ -57,6 +57,8 @@ interface IProductEngine is IProductEngineState {
     /// since tuples aren't a thing in solidity, params specify the transpose
     function applyDeltas(ProductDelta[] calldata deltas) external;
 
+    function updateProduct(bytes calldata txn) external;
+
     function swapLp(
         uint32 productId,
         bytes32 subaccount,

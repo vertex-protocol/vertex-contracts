@@ -10,7 +10,6 @@ import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./interfaces/engine/IProductEngine.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/IOffchainBook.sol";
-import "./libraries/KeyHelper.sol";
 import "./libraries/ERC20Helper.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
@@ -122,20 +121,6 @@ contract ClearinghouseLiq is
             summary.spotAmount -= summary.basisAmount;
             summary.perpAmount += summary.basisAmount;
         }
-    }
-
-    enum LiquidationStatus {
-        CannotLiquidateLiabilities, // still has assets or perps
-        CannotSocialize, // still has basis liabilities
-        // must wait until basis liability liquidation is finished
-        // and only spot liabilities are remaining
-        // remaining: spot liabilities and perp losses
-        // if insurance drained:
-        // -> socialize all
-        // if insurance not drained
-        // -> if spot liabilities, exit
-        // -> else attempt to repay all from insurance
-        CanSocialize
     }
 
     function assertLiquidationAmount(

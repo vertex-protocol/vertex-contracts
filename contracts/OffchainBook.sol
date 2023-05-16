@@ -129,6 +129,7 @@ contract OffchainBook is
         int128 filledAmount = filledAmounts[orderDigest];
         order.amount -= filledAmount;
         return
+            (order.priceX18 > 0) &&
             (order.priceX18 % _market.priceIncrementX18 == 0) &&
             _checkSignature(order.sender, orderDigest, signedOrder.signature) &&
             // valid amount
@@ -259,23 +260,21 @@ contract OffchainBook is
         Market memory _market = market;
         bytes32 takerDigest = getDigest(txn.taker.order);
         int128 takerAmount = txn.taker.order.amount;
-        require(
-            _validateOrder(_market, txn.taker, takerDigest),
-            ERR_INVALID_TAKER
-        );
+        IEndpoint.SignedOrder memory taker = txn.taker;
+        require(_validateOrder(_market, taker, takerDigest), ERR_INVALID_TAKER);
 
-        bool isTakerFirst = takerAmount == txn.taker.order.amount;
+        bool isTakerFirst = takerAmount == taker.order.amount;
 
         (int128 takerAmountDelta, int128 takerQuoteDelta) = _matchOrderAMM(
             _market,
-            txn.taker,
-            txn.taker.order.priceX18
+            taker,
+            taker.order.priceX18
         );
 
         // apply the taker fee
         int128 takerFee;
         (takerFee, takerQuoteDelta) = _feeAmount(
-            txn.taker.order.sender,
+            taker.order.sender,
             _market,
             takerQuoteDelta,
             true,
@@ -288,13 +287,13 @@ contract OffchainBook is
         // taker
         deltas[0] = IProductEngine.ProductDelta({
             productId: _market.productId,
-            subaccount: txn.taker.order.sender,
+            subaccount: taker.order.sender,
             amountDelta: takerAmountDelta,
             vQuoteDelta: takerQuoteDelta
         });
         deltas[1] = IProductEngine.ProductDelta({
             productId: QUOTE_PRODUCT_ID,
-            subaccount: txn.taker.order.sender,
+            subaccount: taker.order.sender,
             amountDelta: takerQuoteDelta,
             vQuoteDelta: 0
         });
@@ -303,7 +302,7 @@ contract OffchainBook is
 
         require(
             clearinghouse.getHealth(
-                txn.taker.order.sender,
+                taker.order.sender,
                 IProductEngine.HealthType.INITIAL
             ) >= 0,
             ERR_INVALID_TAKER
@@ -311,11 +310,11 @@ contract OffchainBook is
 
         emit FillOrder(
             takerDigest,
-            txn.taker.order.sender,
-            txn.taker.order.priceX18,
+            taker.order.sender,
+            taker.order.priceX18,
             takerAmount,
-            txn.taker.order.expiration,
-            txn.taker.order.nonce,
+            taker.order.expiration,
+            taker.order.nonce,
             true,
             takerFee,
             takerAmountDelta,
@@ -323,7 +322,7 @@ contract OffchainBook is
         );
         market.collectedFees = _market.collectedFees;
         market.sequencerFees = _market.sequencerFees;
-        filledAmounts[takerDigest] = takerAmount - txn.taker.order.amount;
+        filledAmounts[takerDigest] = takerAmount - taker.order.amount;
     }
 
     function isHealthy(

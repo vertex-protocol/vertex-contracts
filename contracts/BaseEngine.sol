@@ -73,6 +73,11 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         int128 lpSpreadX18
     ) internal returns (uint32 productId) {
         require(book != address(0));
+        require(
+            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
+            ERR_BAD_PRODUCT_CONFIG
+        );
 
         // register product with clearinghouse
         productId = _clearinghouse.registerProductForId(

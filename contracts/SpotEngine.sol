@@ -38,7 +38,6 @@ contract SpotEngine is SpotEngineLP, Version {
             totalDepositsNormalized: 0,
             totalBorrowsNormalized: 0
         });
-        withdrawFees[QUOTE_PRODUCT_ID] = 1e16;
         productIds.push(QUOTE_PRODUCT_ID);
         emit AddProduct(QUOTE_PRODUCT_ID);
     }
@@ -56,18 +55,16 @@ contract SpotEngine is SpotEngineLP, Version {
     }
 
     function getWithdrawFee(uint32 productId) external view returns (int128) {
-        return withdrawFees[productId];
-    }
-
-    function setWithdrawFee(uint32 productId, int128 withdrawFee)
-        public
-        onlyOwner
-    {
         if (productId == QUOTE_PRODUCT_ID) {
-            withdrawFees[QUOTE_PRODUCT_ID] = 1e16;
-        } else {
-            withdrawFees[productId] = withdrawFee;
+            return 1e18;
+        } else if (productId == 1) {
+            return 4e13;
+        } else if (productId == 3) {
+            return 6e14;
+        } else if (productId == 5) {
+            return 1e18;
         }
+        revert(ERR_INVALID_PRODUCT);
     }
 
     /**
@@ -82,15 +79,9 @@ contract SpotEngine is SpotEngineLP, Version {
         int128 priceIncrementX18,
         int128 minSize,
         int128 lpSpreadX18,
-        int128 withdrawFee,
         Config calldata config,
         IClearinghouseState.RiskStore calldata riskStore
     ) public onlyOwner {
-        require(
-            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
-            ERR_BAD_PRODUCT_CONFIG
-        );
         uint32 productId = _addProductForId(
             healthGroup,
             riskStore,
@@ -109,8 +100,6 @@ contract SpotEngine is SpotEngineLP, Version {
             totalBorrowsNormalized: 0
         });
 
-        withdrawFees[productId] = withdrawFee;
-
         lpStates[productId] = LpState({
             supply: 0,
             quote: Balance({amount: 0, lastCumulativeMultiplierX18: ONE}),
@@ -118,31 +107,24 @@ contract SpotEngine is SpotEngineLP, Version {
         });
     }
 
-    function updateProduct(
-        uint32 productId,
-        int128 sizeIncrement,
-        int128 priceIncrementX18,
-        int128 minSize,
-        int128 lpSpreadX18,
-        int128 withdrawFee,
-        Config calldata config,
-        IClearinghouseState.RiskStore calldata riskStore
-    ) public onlyOwner {
+    function updateProduct(bytes calldata tx) external onlyEndpoint {
+        UpdateProductTx memory tx = abi.decode(tx, (UpdateProductTx));
+        IClearinghouseState.RiskStore memory riskStore = tx.riskStore;
+
         require(
             riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
                 riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
             ERR_BAD_PRODUCT_CONFIG
         );
-        markets[productId].modifyConfig(
-            sizeIncrement,
-            priceIncrementX18,
-            minSize,
-            lpSpreadX18
+        markets[tx.productId].modifyConfig(
+            tx.sizeIncrement,
+            tx.priceIncrementX18,
+            tx.minSize,
+            tx.lpSpreadX18
         );
 
-        withdrawFees[productId] = withdrawFee;
-        configs[productId] = config;
-        _clearinghouse.modifyProductConfig(productId, riskStore);
+        configs[tx.productId] = tx.config;
+        _clearinghouse.modifyProductConfig(tx.productId, riskStore);
     }
 
     /// @notice updates internal balances; given tuples of (product, subaccount, delta)
@@ -200,6 +182,23 @@ contract SpotEngine is SpotEngineLP, Version {
                 );
 
                 balances[productId][subaccount].balance.amountNormalized = 0;
+
+                if (productId == QUOTE_PRODUCT_ID) {
+                    for (uint128 j = 0; j < productIds.length; ++j) {
+                        uint32 baseProductId = productIds[j];
+                        if (baseProductId == QUOTE_PRODUCT_ID) {
+                            continue;
+                        }
+                        LpState memory lpState = lpStates[baseProductId];
+                        _updateBalanceWithoutDelta(state, lpState.quote);
+                        lpStates[baseProductId] = lpState;
+                    }
+                } else {
+                    LpState memory lpState = lpStates[productId];
+                    _updateBalanceWithoutDelta(state, lpState.base);
+                    lpStates[productId] = lpState;
+                }
+
                 states[productId] = state;
             }
         }
@@ -209,7 +208,7 @@ contract SpotEngine is SpotEngineLP, Version {
         int128[] calldata totalDeposits,
         int128[] calldata totalBorrows
     ) external view {
-        for (uint128 i = 0; i < productIds.length; ++i) {
+        for (uint128 i = 0; i < totalDeposits.length; ++i) {
             uint32 productId = productIds[i];
             State memory state = states[productId];
             require(

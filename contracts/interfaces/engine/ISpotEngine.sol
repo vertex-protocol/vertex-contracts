@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./IProductEngine.sol";
+import "../clearinghouse/IClearinghouseState.sol";
 
 interface ISpotEngine is IProductEngine {
     struct Config {
@@ -41,6 +42,16 @@ interface ISpotEngine is IProductEngine {
     struct Balances {
         BalanceNormalized balance;
         LpBalance lpBalance;
+    }
+
+    struct UpdateProductTx {
+        uint32 productId;
+        int128 sizeIncrement;
+        int128 priceIncrementX18;
+        int128 minSize;
+        int128 lpSpreadX18;
+        Config config;
+        IClearinghouseState.RiskStore riskStore;
     }
 
     function getStateAndBalance(uint32 productId, bytes32 subaccount)

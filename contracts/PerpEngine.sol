@@ -45,11 +45,6 @@ contract PerpEngine is PerpEngineLp, Version {
         int128 lpSpreadX18,
         IClearinghouseState.RiskStore calldata riskStore
     ) public onlyOwner {
-        require(
-            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
-            ERR_BAD_PRODUCT_CONFIG
-        );
         uint32 productId = _addProductForId(
             healthGroup,
             riskStore,
@@ -78,27 +73,23 @@ contract PerpEngine is PerpEngineLp, Version {
 
     /// @notice changes the configs of a product, if a new book is provided
     /// also clears the book
-    function updateProduct(
-        uint32 productId,
-        int128 sizeIncrement,
-        int128 priceIncrementX18,
-        int128 minSize,
-        int128 lpSpreadX18,
-        IClearinghouseState.RiskStore calldata riskStore
-    ) public onlyOwner {
+    function updateProduct(bytes calldata tx) external onlyEndpoint {
+        UpdateProductTx memory tx = abi.decode(tx, (UpdateProductTx));
+        IClearinghouseState.RiskStore memory riskStore = tx.riskStore;
+
         require(
             riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
                 riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
             ERR_BAD_PRODUCT_CONFIG
         );
-        markets[productId].modifyConfig(
-            sizeIncrement,
-            priceIncrementX18,
-            minSize,
-            lpSpreadX18
+        markets[tx.productId].modifyConfig(
+            tx.sizeIncrement,
+            tx.priceIncrementX18,
+            tx.minSize,
+            tx.lpSpreadX18
         );
 
-        _clearinghouse.modifyProductConfig(productId, riskStore);
+        _clearinghouse.modifyProductConfig(tx.productId, riskStore);
     }
 
     /// @notice updates internal balances; given tuples of (product, subaccount, delta)
@@ -261,6 +252,24 @@ contract PerpEngine is PerpEngineLp, Version {
                     ) / 2;
                     state.cumulativeFundingLongX18 += fundingPerShare;
                     state.cumulativeFundingShortX18 -= fundingPerShare;
+
+                    LpState memory lpState = lpStates[productId];
+                    Balance memory tmp = Balance({
+                        amount: lpState.base,
+                        vQuoteBalance: 0,
+                        lastCumulativeFundingX18: lpState
+                            .lastCumulativeFundingX18
+                    });
+                    _updateBalance(state, tmp, 0, 0);
+                    if (lpState.supply != 0) {
+                        lpState.cumulativeFundingPerLpX18 += tmp
+                            .vQuoteBalance
+                            .div(lpState.supply);
+                    }
+                    lpState.lastCumulativeFundingX18 = state
+                        .cumulativeFundingLongX18;
+
+                    lpStates[productId] = lpState;
                     states[productId] = state;
                     balance.vQuoteBalance = 0;
                     emit SocializeProduct(productId, -balance.vQuoteBalance);
@@ -272,7 +281,7 @@ contract PerpEngine is PerpEngineLp, Version {
     }
 
     function manualAssert(int128[] calldata openInterests) external view {
-        for (uint128 i = 0; i < productIds.length; ++i) {
+        for (uint128 i = 0; i < openInterests.length; ++i) {
             uint32 productId = productIds[i];
             require(
                 states[productId].openInterest == openInterests[i],
