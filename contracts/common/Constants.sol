@@ -20,4 +20,4 @@ int128 constant SLOW_MODE_FEE = 1000000; // $1
 int128 constant LIQUIDATION_FEE = 1e18; // $1
 int128 constant HEALTHCHECK_FEE = 1e18; // $1
 
-uint64 constant VERSION = 11;
+uint64 constant VERSION = 14;

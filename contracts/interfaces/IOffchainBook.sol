@@ -64,9 +64,12 @@ interface IOffchainBook is IVersion {
 
     function swapAMM(IEndpoint.SwapAMM calldata tx) external;
 
-    function matchOrderAMM(IEndpoint.MatchOrderAMM calldata tx) external;
+    function matchOrderAMM(
+        IEndpoint.MatchOrderAMM calldata tx,
+        address takerLinkedSigner
+    ) external;
 
-    function matchOrders(IEndpoint.MatchOrders calldata tx) external;
+    function matchOrders(IEndpoint.MatchOrdersWithSigner calldata tx) external;
 
     function dumpFees() external;
 

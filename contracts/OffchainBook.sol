@@ -112,18 +112,21 @@ contract OffchainBook is
     function _checkSignature(
         bytes32 subaccount,
         bytes32 digest,
+        address linkedSigner,
         bytes memory signature
     ) internal view virtual returns (bool) {
         address signer = ECDSA.recover(digest, signature);
         return
             (signer != address(0)) &&
-            (signer == address(uint160(bytes20(subaccount))));
+            (signer == address(uint160(bytes20(subaccount))) ||
+                signer == linkedSigner);
     }
 
     function _validateOrder(
         Market memory _market,
         IEndpoint.SignedOrder memory signedOrder,
-        bytes32 orderDigest
+        bytes32 orderDigest,
+        address linkedSigner
     ) internal view returns (bool) {
         IEndpoint.Order memory order = signedOrder.order;
         int128 filledAmount = filledAmounts[orderDigest];
@@ -131,7 +134,12 @@ contract OffchainBook is
         return
             (order.priceX18 > 0) &&
             (order.priceX18 % _market.priceIncrementX18 == 0) &&
-            _checkSignature(order.sender, orderDigest, signedOrder.signature) &&
+            _checkSignature(
+                order.sender,
+                orderDigest,
+                linkedSigner,
+                signedOrder.signature
+            ) &&
             // valid amount
             (order.amount != 0) &&
             (order.amount % _market.sizeIncrement == 0) &&
@@ -161,6 +169,17 @@ contract OffchainBook is
         return (feeAmount, newAmount);
     }
 
+    function feeAmount(
+        bytes32 subaccount,
+        Market memory _market,
+        int128 amount,
+        bool taker,
+        // is this the first instance of this taker order matching
+        bool takerFirst
+    ) internal virtual returns (int128, int128) {
+        return _feeAmount(subaccount, _market, amount, taker, takerFirst);
+    }
+
     struct OrdersInfo {
         bytes32 takerDigest;
         bytes32 makerDigest;
@@ -169,19 +188,45 @@ contract OffchainBook is
 
     function _matchOrderAMM(
         Market memory _market,
-        IEndpoint.SignedOrder memory taker,
-        int128 limitPriceX18
+        int128 baseDelta, // change in the LP's base position
+        int128 quoteDelta, // change in the LP's quote position
+        IEndpoint.SignedOrder memory taker
     ) internal returns (int128, int128) {
+        // 1. assert that the price is better than the limit price
+        int128 impliedPriceX18 = quoteDelta.div(baseDelta).abs();
+        if (taker.order.amount > 0) {
+            // if buying, the implied price must be lower than the limit price
+            require(
+                impliedPriceX18 <= taker.order.priceX18,
+                ERR_ORDERS_CANNOT_BE_MATCHED
+            );
+
+            // AMM must be selling
+            // magnitude of what AMM is selling must be less than or equal to what the taker is buying
+            require(
+                baseDelta < 0 && taker.order.amount >= -baseDelta,
+                ERR_ORDERS_CANNOT_BE_MATCHED
+            );
+        } else {
+            // if selling, the implied price must be higher than the limit price
+            require(
+                impliedPriceX18 >= taker.order.priceX18,
+                ERR_ORDERS_CANNOT_BE_MATCHED
+            );
+            // AMM must be buying
+            // magnitude of what AMM is buying must be less than or equal to what the taker is selling
+            require(
+                baseDelta > 0 && taker.order.amount <= -baseDelta,
+                ERR_ORDERS_CANNOT_BE_MATCHED
+            );
+        }
+
+        require(baseDelta % market.sizeIncrement == 0, ERR_INVALID_MAKER);
+
         (int128 baseSwapped, int128 quoteSwapped) = engine.swapLp(
             _market.productId,
-            taker.order.sender,
-            // positive amount == buying base
-            // means we are trying to swap a negative
-            // amount of base
-            -taker.order.amount,
-            limitPriceX18,
-            _market.sizeIncrement,
-            _market.lpSpreadX18
+            baseDelta,
+            quoteDelta
         );
 
         taker.order.amount += baseSwapped;
@@ -209,7 +254,7 @@ contract OffchainBook is
 
         // apply the maker fee
         int128 makerFee;
-        (makerFee, makerQuoteDelta) = _feeAmount(
+        (makerFee, makerQuoteDelta) = feeAmount(
             maker.sender,
             _market,
             makerQuoteDelta,
@@ -253,27 +298,36 @@ contract OffchainBook is
         );
     }
 
-    function matchOrderAMM(IEndpoint.MatchOrderAMM calldata txn)
-        external
-        onlyEndpoint
-    {
+    function matchOrderAMM(
+        IEndpoint.MatchOrderAMM calldata txn,
+        address takerLinkedSigner
+    ) external onlyEndpoint {
         Market memory _market = market;
         bytes32 takerDigest = getDigest(txn.taker.order);
         int128 takerAmount = txn.taker.order.amount;
+
+        // need to convert the taker order from calldata into memory
+        // otherwise modifications we make to the order's amounts
+        // don't persist
         IEndpoint.SignedOrder memory taker = txn.taker;
-        require(_validateOrder(_market, taker, takerDigest), ERR_INVALID_TAKER);
+
+        require(
+            _validateOrder(_market, taker, takerDigest, takerLinkedSigner),
+            ERR_INVALID_TAKER
+        );
 
         bool isTakerFirst = takerAmount == taker.order.amount;
 
         (int128 takerAmountDelta, int128 takerQuoteDelta) = _matchOrderAMM(
             _market,
-            taker,
-            taker.order.priceX18
+            txn.baseDelta,
+            txn.quoteDelta,
+            taker
         );
 
         // apply the taker fee
         int128 takerFee;
-        (takerFee, takerQuoteDelta) = _feeAmount(
+        (takerFee, takerQuoteDelta) = feeAmount(
             taker.order.sender,
             _market,
             takerQuoteDelta,
@@ -300,13 +354,7 @@ contract OffchainBook is
 
         engine.applyDeltas(deltas);
 
-        require(
-            clearinghouse.getHealth(
-                taker.order.sender,
-                IProductEngine.HealthType.INITIAL
-            ) >= 0,
-            ERR_INVALID_TAKER
-        );
+        require(isHealthy(taker.order.sender), ERR_INVALID_TAKER);
 
         emit FillOrder(
             takerDigest,
@@ -331,13 +379,13 @@ contract OffchainBook is
         return true;
     }
 
-    function matchOrders(IEndpoint.MatchOrders calldata txn)
+    function matchOrders(IEndpoint.MatchOrdersWithSigner calldata txn)
         external
         onlyEndpoint
     {
         Market memory _market = market;
-        IEndpoint.SignedOrder memory taker = txn.taker;
-        IEndpoint.SignedOrder memory maker = txn.maker;
+        IEndpoint.SignedOrder memory taker = txn.matchOrders.taker;
+        IEndpoint.SignedOrder memory maker = txn.matchOrders.maker;
 
         OrdersInfo memory ordersInfo = OrdersInfo({
             takerDigest: getDigest(taker.order),
@@ -348,11 +396,21 @@ contract OffchainBook is
         int128 takerAmount = taker.order.amount;
 
         require(
-            _validateOrder(_market, taker, ordersInfo.takerDigest),
+            _validateOrder(
+                _market,
+                taker,
+                ordersInfo.takerDigest,
+                txn.takerLinkedSigner
+            ),
             ERR_INVALID_TAKER
         );
         require(
-            _validateOrder(_market, maker, ordersInfo.makerDigest),
+            _validateOrder(
+                _market,
+                maker,
+                ordersInfo.makerDigest,
+                txn.makerLinkedSigner
+            ),
             ERR_INVALID_MAKER
         );
 
@@ -375,31 +433,16 @@ contract OffchainBook is
 
         bool isTakerFirst = takerAmount == taker.order.amount;
 
-        int128 takerAmountDelta;
-        int128 takerQuoteDelta;
-
-        if (txn.amm) {
-            (takerAmountDelta, takerQuoteDelta) = _matchOrderAMM(
-                _market,
-                taker,
-                maker.order.priceX18
-            );
-        }
-
-        {
-            (int128 baseDelta, int128 quoteDelta) = _matchOrderOrder(
-                _market,
-                taker.order,
-                maker.order,
-                ordersInfo
-            );
-            takerAmountDelta += baseDelta;
-            takerQuoteDelta += quoteDelta;
-        }
+        (int128 takerAmountDelta, int128 takerQuoteDelta) = _matchOrderOrder(
+            _market,
+            taker.order,
+            maker.order,
+            ordersInfo
+        );
 
         // apply the taker fee
         int128 takerFee;
-        (takerFee, takerQuoteDelta) = _feeAmount(
+        (takerFee, takerQuoteDelta) = feeAmount(
             taker.order.sender,
             _market,
             takerQuoteDelta,
@@ -433,11 +476,11 @@ contract OffchainBook is
 
         emit FillOrder(
             ordersInfo.takerDigest,
-            txn.taker.order.sender,
-            txn.taker.order.priceX18,
+            txn.matchOrders.taker.order.sender,
+            txn.matchOrders.taker.order.priceX18,
             takerAmount,
-            txn.taker.order.expiration,
-            txn.taker.order.nonce,
+            txn.matchOrders.taker.order.expiration,
+            txn.matchOrders.taker.order.nonce,
             true,
             takerFee,
             takerAmountDelta,
@@ -465,7 +508,6 @@ contract OffchainBook is
 
         (int128 takerAmountDelta, int128 takerQuoteDelta) = engine.swapLp(
             _market.productId,
-            txn.sender,
             txn.amount,
             txn.priceX18,
             _market.sizeIncrement,
@@ -475,7 +517,7 @@ contract OffchainBook is
         takerQuoteDelta = -takerQuoteDelta;
 
         int128 takerFee;
-        (takerFee, takerQuoteDelta) = _feeAmount(
+        (takerFee, takerQuoteDelta) = feeAmount(
             txn.sender,
             _market,
             takerQuoteDelta,

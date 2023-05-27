@@ -113,7 +113,9 @@ contract SpotEngine is SpotEngineLP, Version {
 
         require(
             riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
+                riskStore.shortWeightInitial >
+                riskStore.shortWeightMaintenance &&
+                configs[tx.productId].token == tx.config.token,
             ERR_BAD_PRODUCT_CONFIG
         );
         markets[tx.productId].modifyConfig(

@@ -142,6 +142,25 @@ library MathHelper {
         return (base, quote);
     }
 
+    function isSwapValid(
+        int128 baseDelta,
+        int128 quoteDelta,
+        int128 base,
+        int128 quote
+    ) internal pure returns (bool) {
+        if (
+            base == 0 ||
+            quote == 0 ||
+            base + baseDelta <= 0 ||
+            quote + quoteDelta <= 0
+        ) {
+            return false;
+        }
+        int256 kPrev = int256(base) * quote;
+        int256 kNew = int256(base + baseDelta) * (quote + quoteDelta);
+        return kNew > kPrev;
+    }
+
     function swap(
         int128 amountSwap,
         int128 base,

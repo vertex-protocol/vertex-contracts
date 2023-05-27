@@ -33,8 +33,11 @@ interface IEndpoint is IVersion {
         PerpTick,
         ManualAssert,
         Rebate,
-        UpdateProduct
+        UpdateProduct,
+        LinkSigner,
+        UpdateFeeRates
     }
+
     struct UpdateProduct {
         address engine;
         bytes tx;
@@ -110,6 +113,17 @@ interface IEndpoint is IVersion {
         bytes signature;
     }
 
+    struct LinkSigner {
+        bytes32 sender;
+        bytes32 signer;
+        uint64 nonce;
+    }
+
+    struct SignedLinkSigner {
+        LinkSigner tx;
+        bytes signature;
+    }
+
     /// callable by endpoint; no signature verifications needed
     struct PerpTick {
         uint128 time;
@@ -129,6 +143,16 @@ interface IEndpoint is IVersion {
     struct Rebate {
         bytes32[] subaccounts;
         int128[] amounts;
+    }
+
+    struct UpdateFeeRates {
+        address user;
+        uint32 productId;
+        // the absolute value of fee rates can't be larger than 100%,
+        // so their X18 values are in the range [-1e18, 1e18], which
+        // can be stored by using int64.
+        int64 makerRateX18;
+        int64 takerRateX18;
     }
 
     struct UpdatePrice {
@@ -157,14 +181,22 @@ interface IEndpoint is IVersion {
 
     struct MatchOrders {
         uint32 productId;
-        bool amm; // whether taker order should hit AMM first
+        bool amm; // whether taker order should hit AMM first (deprecated)
         SignedOrder taker;
         SignedOrder maker;
+    }
+
+    struct MatchOrdersWithSigner {
+        MatchOrders matchOrders;
+        address takerLinkedSigner;
+        address makerLinkedSigner;
     }
 
     // just swap against AMM -- theres no maker order
     struct MatchOrderAMM {
         uint32 productId;
+        int128 baseDelta;
+        int128 quoteDelta;
         SignedOrder taker;
     }
 

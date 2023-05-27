@@ -61,12 +61,16 @@ interface IProductEngine is IProductEngineState {
 
     function swapLp(
         uint32 productId,
-        bytes32 subaccount,
-        // maximum to swap
         int128 amount,
         int128 priceX18,
         int128 sizeIncrement,
         int128 lpSpreadX18
+    ) external returns (int128, int128);
+
+    function swapLp(
+        uint32 productId,
+        int128 baseDelta,
+        int128 quoteDelta
     ) external returns (int128, int128);
 
     function mintLp(

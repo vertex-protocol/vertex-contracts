@@ -45,6 +45,8 @@ interface IClearinghouse is
 
     function settlePnl(IEndpoint.SettlePnl calldata tx) external;
 
+    function updateFeeRates(IEndpoint.UpdateFeeRates calldata tx) external;
+
     /// @notice Retrieve quote ERC20 address
     function getQuote() external view returns (address);
 

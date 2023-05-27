@@ -4,29 +4,44 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Version.sol";
 import "./interfaces/IFeeCalculator.sol";
+import "./common/Errors.sol";
 
 // Playground for volume tracking: https://github.com/vertex-protocol/vertex-evm/commit/b52ea07a6b40ab8b0d8198886bc4ac6e60c61233
 contract FeeCalculator is Initializable, IFeeCalculator, Version {
+    address private clearinghouse;
+    mapping(address => mapping(uint32 => FeeRates)) feeRates;
+
     function initialize() external initializer {}
+
+    function migrate(address _clearinghouse) external {
+        require(clearinghouse == address(0), "already migrated");
+        clearinghouse = _clearinghouse;
+    }
+
+    function getClearinghouse() external view returns (address) {
+        return clearinghouse;
+    }
 
     function recordVolume(bytes32 subaccount, uint128 quoteVolume) external {}
 
     function getFeeFractionX18(
-        bytes32, /* subaccount */
+        bytes32 subaccount,
         uint32 productId,
         bool taker
-    ) external pure returns (int128) {
+    ) external view returns (int128) {
         require(productId != 0 && productId <= 6, "invalid productId");
-        if (taker) {
-            if (productId % 2 == 1) {
-                return 300_000_000_000_000;
-            } else {
-                return 200_000_000_000_000;
+        FeeRates memory userFeeRates = feeRates[
+            address(uint160(bytes20(subaccount)))
+        ][productId];
+        if (userFeeRates.isNonDefault == 0) {
+            // use the default fee rates.
+            if (productId == 1 || productId == 3 || productId == 5) {
+                userFeeRates = FeeRates(0, 300_000_000_000_000, 1);
+            } else if (productId == 2 || productId == 4 || productId == 6) {
+                userFeeRates = FeeRates(0, 200_000_000_000_000, 1);
             }
-        } else {
-            return 0;
         }
-        // feecalc needs more state to look up fractions for various products, if that was the plan
+        return taker ? userFeeRates.takerRateX18 : userFeeRates.makerRateX18;
     }
 
     function getInterestFeeFractionX18(
@@ -40,5 +55,15 @@ contract FeeCalculator is Initializable, IFeeCalculator, Version {
         uint32 /* productId */
     ) external pure returns (int128) {
         return 250_000_000_000_000_000; // 25%
+    }
+
+    function updateFeeRates(
+        address user,
+        uint32 productId,
+        int64 makerRateX18,
+        int64 takerRateX18
+    ) external {
+        require(msg.sender == clearinghouse, ERR_UNAUTHORIZED);
+        feeRates[user][productId] = FeeRates(makerRateX18, takerRateX18, 1);
     }
 }

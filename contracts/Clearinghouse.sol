@@ -543,6 +543,19 @@ contract Clearinghouse is
         require(!_isUnderInitial(FEES_ACCOUNT), ERR_SUBACCT_HEALTH);
     }
 
+    function updateFeeRates(IEndpoint.UpdateFeeRates calldata txn)
+        external
+        virtual
+        onlyEndpoint
+    {
+        fees.updateFeeRates(
+            txn.user,
+            txn.productId,
+            txn.makerRateX18,
+            txn.takerRateX18
+        );
+    }
+
     function _settlePnl(bytes32 subaccount, uint256 productIds) internal {
         IPerpEngine perpEngine = IPerpEngine(
             address(engineByType[IProductEngine.EngineType.PERP])

@@ -117,7 +117,6 @@ abstract contract PerpEngineLp is PerpEngineState {
 
     function swapLp(
         uint32 productId,
-        bytes32, /* subaccount */
         // maximum to swap
         int128 amount,
         int128 priceX18,
@@ -132,8 +131,6 @@ abstract contract PerpEngineLp is PerpEngineState {
             return (0, 0);
         }
 
-        State memory state = states[productId];
-
         (baseSwapped, quoteSwapped) = MathHelper.swap(
             amount,
             lpState.base,
@@ -143,12 +140,36 @@ abstract contract PerpEngineLp is PerpEngineState {
             lpSpreadX18
         );
 
-        state.openInterest += baseSwapped;
+        states[productId].openInterest += baseSwapped;
 
         lpState.base += baseSwapped;
         lpState.quote += quoteSwapped;
-        states[productId] = state;
         lpStates[productId] = lpState;
+    }
+
+    function swapLp(
+        uint32 productId,
+        int128 baseDelta,
+        int128 quoteDelta
+    ) external returns (int128, int128) {
+        checkCanApplyDeltas();
+        LpState memory lpState = lpStates[productId];
+        require(
+            MathHelper.isSwapValid(
+                baseDelta,
+                quoteDelta,
+                lpState.base,
+                lpState.quote
+            ),
+            ERR_INVALID_MAKER
+        );
+
+        states[productId].openInterest += baseDelta;
+
+        lpState.base += baseDelta;
+        lpState.quote += quoteDelta;
+        lpStates[productId] = lpState;
+        return (baseDelta, quoteDelta);
     }
 
     function decomposeLps(

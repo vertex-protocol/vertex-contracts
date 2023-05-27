@@ -56,6 +56,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     mapping(uint32 => int128) public sequencerFee;
 
+    mapping(bytes32 => address) linkedSigners;
+
     string constant LIQUIDATE_SUBACCOUNT_SIGNATURE =
         "LiquidateSubaccount(bytes32 sender,bytes32 liquidatee,uint8 mode,uint32 healthGroup,int128 amount,uint64 nonce)";
     string constant WITHDRAW_COLLATERAL_SIGNATURE =
@@ -64,6 +66,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         "MintLp(bytes32 sender,uint32 productId,uint128 amountBase,uint128 quoteAmountLow,uint128 quoteAmountHigh,uint64 nonce)";
     string constant BURN_LP_SIGNATURE =
         "BurnLp(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
+    string constant LINK_SIGNER_SIGNATURE =
+        "LinkSigner(bytes32 sender,bytes32 signer,uint64 nonce)";
 
     function initialize(
         address _sanctions,
@@ -78,7 +82,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         sequencer = _sequencer;
         clearinghouse = _clearinghouse;
         sanctions = ISanctionsList(_sanctions);
-
         spotEngine = ISpotEngine(
             clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
         );
@@ -129,6 +132,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         return subaccountIds[subaccount];
     }
 
+    function getLinkedSigner(bytes32 subaccount)
+        external
+        view
+        returns (address)
+    {
+        return linkedSigners[subaccount];
+    }
+
     function getSubaccountById(uint64 subaccountId)
         external
         view
@@ -177,7 +188,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         address recovered = ECDSA.recover(digest, signature);
         require(
             (recovered != address(0)) &&
-                (recovered == address(uint160(bytes20(sender)))),
+                ((recovered == address(uint160(bytes20(sender)))) ||
+                    (recovered == linkedSigners[sender])),
             ERR_INVALID_SIGNATURE
         );
     }
@@ -332,31 +344,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                     invalid()
                 }
             }
-            try this.tryReturnFunds(txn.tx) {} catch {}
-        }
-    }
 
-    function tryReturnFunds(bytes calldata transaction) public {
-        require(
-            msg.sender == address(this),
-            "only callable to execute slow mode txs"
-        );
-        TransactionType txType = TransactionType(uint8(transaction[0]));
-        if (txType == TransactionType.DepositCollateral) {
-            DepositCollateral memory txn = abi.decode(
-                transaction[1:],
-                (DepositCollateral)
-            );
-            IERC20Base token = IERC20Base(
-                spotEngine.getConfig(txn.productId).token
-            );
-            token.decreaseAllowance(address(clearinghouse), txn.amount);
-            token.safeTransfer(
-                address(uint160(bytes20(txn.sender))),
-                uint256(txn.amount)
-            );
+            // try return funds now removed
         }
-        // NOTE: no need to return funds on DepositInsurance; its really only meant for us
     }
 
     function executeSlowModeTransactions(uint32 count) external {
@@ -436,6 +426,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 (UpdateProduct)
             );
             IProductEngine(txn.engine).updateProduct(txn.tx);
+        } else if (txType == TransactionType.LinkSigner) {
+            LinkSigner memory txn = abi.decode(transaction[1:], (LinkSigner));
+            validateSender(txn.sender, sender);
+            linkedSigners[txn.sender] = address(uint160(bytes20(txn.signer)));
         } else {
             revert("Invalid transaction type");
         }
@@ -520,14 +514,22 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             MatchOrders memory txn = abi.decode(transaction[1:], (MatchOrders));
             requireSubaccount(txn.taker.order.sender);
             requireSubaccount(txn.maker.order.sender);
-            IOffchainBook(books[txn.productId]).matchOrders(txn);
+            MatchOrdersWithSigner memory txnWithSigner = MatchOrdersWithSigner({
+                matchOrders: txn,
+                takerLinkedSigner: linkedSigners[txn.taker.order.sender],
+                makerLinkedSigner: linkedSigners[txn.maker.order.sender]
+            });
+            IOffchainBook(books[txn.productId]).matchOrders(txnWithSigner);
         } else if (txType == TransactionType.MatchOrderAMM) {
             MatchOrderAMM memory txn = abi.decode(
                 transaction[1:],
                 (MatchOrderAMM)
             );
             requireSubaccount(txn.taker.order.sender);
-            IOffchainBook(books[txn.productId]).matchOrderAMM(txn);
+            IOffchainBook(books[txn.productId]).matchOrderAMM(
+                txn,
+                linkedSigners[txn.taker.order.sender]
+            );
         } else if (txType == TransactionType.ExecuteSlowMode) {
             SlowModeConfig memory _slowModeConfig = slowModeConfig;
             _executeSlowModeTransaction(_slowModeConfig, true);
@@ -615,6 +617,32 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         } else if (txType == TransactionType.Rebate) {
             Rebate memory txn = abi.decode(transaction[1:], (Rebate));
             clearinghouse.rebate(txn);
+        } else if (txType == TransactionType.LinkSigner) {
+            SignedLinkSigner memory signedTx = abi.decode(
+                transaction[1:],
+                (SignedLinkSigner)
+            );
+            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
+            bytes32 digest = _hashTypedDataV4(
+                keccak256(
+                    abi.encode(
+                        keccak256(bytes(LINK_SIGNER_SIGNATURE)),
+                        signedTx.tx.sender,
+                        signedTx.tx.signer,
+                        signedTx.tx.nonce
+                    )
+                )
+            );
+            validateSignature(signedTx.tx.sender, digest, signedTx.signature);
+            linkedSigners[signedTx.tx.sender] = address(
+                uint160(bytes20(signedTx.tx.signer))
+            );
+        } else if (txType == TransactionType.UpdateFeeRates) {
+            UpdateFeeRates memory txn = abi.decode(
+                transaction[1:],
+                (UpdateFeeRates)
+            );
+            clearinghouse.updateFeeRates(txn);
         } else {
             revert("Invalid transaction type");
         }

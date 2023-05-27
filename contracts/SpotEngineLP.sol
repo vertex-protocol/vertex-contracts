@@ -118,7 +118,6 @@ abstract contract SpotEngineLP is SpotEngineState {
 
     function swapLp(
         uint32 productId,
-        bytes32, /* subaccount */
         // maximum to swap
         int128 amount,
         int128 priceX18,
@@ -158,6 +157,42 @@ abstract contract SpotEngineLP is SpotEngineState {
         );
 
         // actual balance updates for the subaccount happen in OffchainBook
+    }
+
+    function swapLp(
+        uint32 productId,
+        int128 baseDelta,
+        int128 quoteDelta
+    ) external returns (int128, int128) {
+        checkCanApplyDeltas();
+        LpState memory lpState = lpStates[productId];
+        require(
+            MathHelper.isSwapValid(
+                baseDelta,
+                quoteDelta,
+                lpState.base.amount,
+                lpState.quote.amount
+            ),
+            ERR_INVALID_MAKER
+        );
+
+        int128 baseDepositsMultiplierX18 = states[productId]
+            .cumulativeDepositsMultiplierX18;
+        int128 quoteDepositsMultiplierX18 = states[QUOTE_PRODUCT_ID]
+            .cumulativeDepositsMultiplierX18;
+
+        lpState.base.amount += baseDelta;
+        lpState.quote.amount += quoteDelta;
+        lpStates[productId] = lpState;
+
+        states[productId].totalDepositsNormalized += baseDelta.div(
+            baseDepositsMultiplierX18
+        );
+        states[QUOTE_PRODUCT_ID].totalDepositsNormalized += quoteDelta.div(
+            quoteDepositsMultiplierX18
+        );
+
+        return (baseDelta, quoteDelta);
     }
 
     function decomposeLps(
