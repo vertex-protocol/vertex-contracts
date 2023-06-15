@@ -7,24 +7,6 @@ import "./IProductEngineState.sol";
 
 interface IProductEngine is IProductEngineState {
     event AddProduct(uint32 productId);
-    event ProductUpdate(uint32 indexed productId);
-    event SocializeProduct(uint32 indexed productId, int128 amountSocialized);
-
-    event MintLp(
-        uint32 indexed productId,
-        bytes32 indexed subaccount,
-        int128 lpAmount,
-        int128 baseAmount,
-        int128 quoteAmount
-    );
-
-    event BurnLp(
-        uint32 indexed productId,
-        bytes32 indexed subaccount,
-        int128 lpAmount,
-        int128 baseAmount,
-        int128 quoteAmount
-    );
 
     enum EngineType {
         SPOT,

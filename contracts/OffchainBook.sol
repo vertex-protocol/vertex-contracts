@@ -122,6 +122,10 @@ contract OffchainBook is
                 signer == linkedSigner);
     }
 
+    function _expired(uint64 expiration) internal view returns (bool) {
+        return expiration & ((1 << 62) - 1) <= getOracleTime();
+    }
+
     function _validateOrder(
         Market memory _market,
         IEndpoint.SignedOrder memory signedOrder,
@@ -143,7 +147,7 @@ contract OffchainBook is
             // valid amount
             (order.amount != 0) &&
             (order.amount % _market.sizeIncrement == 0) &&
-            (order.expiration > getOracleTime());
+            !_expired(order.expiration);
     }
 
     function _feeAmount(
@@ -582,11 +586,11 @@ contract OffchainBook is
         engine.applyDeltas(feeAccDeltas);
     }
 
-    function claimSequencerFee()
-        external
-        onlyEndpoint
-        returns (int128 feesAmount)
-    {
+    function claimSequencerFee() external returns (int128 feesAmount) {
+        require(
+            msg.sender == address(clearinghouse),
+            "Only the clearinghouse can claim sequencer fee"
+        );
         feesAmount = market.sequencerFees;
         market.sequencerFees = 0;
     }

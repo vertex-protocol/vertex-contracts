@@ -83,13 +83,6 @@ interface IPerpEngine is IProductEngine {
         external
         returns (int128);
 
-    /// @notice Emitted during perp settlement
-    event SettlePnl(
-        bytes32 indexed subaccount,
-        uint32 productId,
-        int128 amount
-    );
-
     function getSettlementState(uint32 productId, bytes32 subaccount)
         external
         view

@@ -35,10 +35,15 @@ contract FeeCalculator is Initializable, IFeeCalculator, Version {
         ][productId];
         if (userFeeRates.isNonDefault == 0) {
             // use the default fee rates.
-            if (productId == 1 || productId == 3 || productId == 5) {
+            if (productId == 1 || productId == 3 || productId == 6) {
+                // btc-spot, eth-spot, arb-perp
                 userFeeRates = FeeRates(0, 300_000_000_000_000, 1);
-            } else if (productId == 2 || productId == 4 || productId == 6) {
+            } else if (productId == 2 || productId == 4) {
+                // btc-perp, eth-perp
                 userFeeRates = FeeRates(0, 200_000_000_000_000, 1);
+            } else {
+                // placeholders
+                userFeeRates = FeeRates(0, 0, 1);
             }
         }
         return taker ? userFeeRates.takerRateX18 : userFeeRates.makerRateX18;

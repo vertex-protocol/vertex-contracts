@@ -122,8 +122,7 @@ contract PerpEngine is PerpEngineLp, Version {
 
             states[productId] = state;
             balances[productId][subaccount] = balance;
-
-            emit ProductUpdate(productId);
+            _balanceUpdate(productId, subaccount);
         }
     }
 
@@ -136,25 +135,27 @@ contract PerpEngine is PerpEngineLp, Version {
 
         while (productIds != 0) {
             uint32 productId = uint32(productIds & ((1 << 32) - 1));
-            (
-                int128 canSettle,
-                LpState memory lpState,
-                LpBalance memory lpBalance,
-                State memory state,
-                Balance memory balance
-            ) = getSettlementState(productId, subaccount);
+            // otherwise it means the product is a spot.
+            if (productId % 2 == 0) {
+                (
+                    int128 canSettle,
+                    LpState memory lpState,
+                    LpBalance memory lpBalance,
+                    State memory state,
+                    Balance memory balance
+                ) = getSettlementState(productId, subaccount);
 
-            state.availableSettle -= canSettle;
-            balance.vQuoteBalance -= canSettle;
+                state.availableSettle -= canSettle;
+                balance.vQuoteBalance -= canSettle;
 
-            totalSettled += canSettle;
+                totalSettled += canSettle;
 
-            lpStates[productId] = lpState;
-            states[productId] = state;
-            lpBalances[productId][subaccount] = lpBalance;
-            balances[productId][subaccount] = balance;
-
-            emit SettlePnl(subaccount, productId, canSettle);
+                lpStates[productId] = lpState;
+                states[productId] = state;
+                lpBalances[productId][subaccount] = lpBalance;
+                balances[productId][subaccount] = balance;
+                _balanceUpdate(productId, subaccount);
+            }
             productIds >>= 32;
         }
         return totalSettled;
@@ -272,9 +273,9 @@ contract PerpEngine is PerpEngineLp, Version {
                     lpStates[productId] = lpState;
                     states[productId] = state;
                     balance.vQuoteBalance = 0;
-                    emit SocializeProduct(productId, -balance.vQuoteBalance);
                 }
                 balances[productId][subaccount] = balance;
+                _balanceUpdate(productId, subaccount);
             }
         }
         return insurance;

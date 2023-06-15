@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "hardhat/console.sol";
 
 import "./common/Constants.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
@@ -121,14 +120,11 @@ contract Clearinghouse is
         }
 
         for (uint32 i = 0; i <= maxHealthGroup; ++i) {
-            HealthGroup memory group = healthGroups[i];
+            HealthGroup memory group = HealthGroup(i * 2 + 1, i * 2 + 2);
             HealthVars memory healthVars;
             healthVars.pricesX18 = getOraclePricesX18(i);
 
-            if (
-                group.spotId != 0 &&
-                spotEngine.hasBalance(group.spotId, subaccount)
-            ) {
+            if (spotEngine.hasBalance(group.spotId, subaccount)) {
                 (
                     ISpotEngine.LpBalance memory lpBalance,
                     ISpotEngine.Balance memory balance
@@ -353,20 +349,6 @@ contract Clearinghouse is
         }
         risks[productId] = riskStore;
 
-        require(
-            (engineType == IProductEngine.EngineType.SPOT &&
-                healthGroups[healthGroup].spotId == 0) ||
-                (engineType == IProductEngine.EngineType.PERP &&
-                    healthGroups[healthGroup].perpId == 0),
-            ERR_ALREADY_REGISTERED
-        );
-
-        if (engineType == IProductEngine.EngineType.SPOT) {
-            healthGroups[healthGroup].spotId = productId;
-        } else {
-            healthGroups[healthGroup].perpId = productId;
-        }
-
         if (healthGroup > maxHealthGroup) {
             require(
                 healthGroup == maxHealthGroup + 1,
@@ -554,6 +536,85 @@ contract Clearinghouse is
             txn.makerRateX18,
             txn.takerRateX18
         );
+    }
+
+    function claimSequencerFees(
+        IEndpoint.ClaimSequencerFees calldata txn,
+        int128[] calldata fees
+    ) external virtual onlyEndpoint {
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+
+        IPerpEngine perpEngine = IPerpEngine(
+            address(engineByType[IProductEngine.EngineType.PERP])
+        );
+
+        uint32[] memory spotIds = spotEngine.getProductIds();
+        uint32[] memory perpIds = perpEngine.getProductIds();
+
+        IProductEngine.ProductDelta[]
+            memory spotDeltas = new IProductEngine.ProductDelta[](
+                spotIds.length * 2
+            );
+
+        IProductEngine.ProductDelta[]
+            memory perpDeltas = new IProductEngine.ProductDelta[](
+                perpIds.length * 2
+            );
+
+        require(spotIds[0] == QUOTE_PRODUCT_ID, ERR_INVALID_PRODUCT);
+
+        for (uint32 i = 1; i < spotIds.length; i++) {
+            spotDeltas[0].amountDelta += IOffchainBook(
+                productToEngine[spotIds[i]].getOrderbook(spotIds[i])
+            ).claimSequencerFee();
+        }
+
+        for (uint256 i = 0; i < spotIds.length; i++) {
+            (uint256 subaccountIdx, uint256 feesIdx) = (2 * i, 2 * i + 1);
+
+            spotDeltas[subaccountIdx].productId = spotIds[i];
+            spotDeltas[subaccountIdx].subaccount = txn.subaccount;
+            spotDeltas[subaccountIdx].amountDelta += fees[i];
+
+            ISpotEngine.Balance memory feeBalance = spotEngine.getBalance(
+                spotIds[i],
+                FEES_ACCOUNT
+            );
+
+            spotDeltas[subaccountIdx].amountDelta += feeBalance.amount;
+
+            spotDeltas[feesIdx].productId = spotIds[i];
+            spotDeltas[feesIdx].subaccount = FEES_ACCOUNT;
+            spotDeltas[feesIdx].amountDelta -= feeBalance.amount;
+        }
+
+        for (uint256 i = 0; i < perpIds.length; i++) {
+            (uint256 subaccountIdx, uint256 feesIdx) = (2 * i, 2 * i + 1);
+
+            perpDeltas[subaccountIdx].productId = perpIds[i];
+            perpDeltas[subaccountIdx].subaccount = txn.subaccount;
+            perpDeltas[subaccountIdx].vQuoteDelta += IOffchainBook(
+                productToEngine[perpIds[i]].getOrderbook(perpIds[i])
+            ).claimSequencerFee();
+
+            IPerpEngine.Balance memory feeBalance = perpEngine.getBalance(
+                perpIds[i],
+                FEES_ACCOUNT
+            );
+
+            perpDeltas[subaccountIdx].amountDelta += feeBalance.amount;
+            perpDeltas[subaccountIdx].vQuoteDelta += feeBalance.vQuoteBalance;
+
+            perpDeltas[feesIdx].productId = perpIds[i];
+            perpDeltas[feesIdx].subaccount = FEES_ACCOUNT;
+            perpDeltas[feesIdx].amountDelta -= feeBalance.amount;
+            perpDeltas[feesIdx].vQuoteDelta -= feeBalance.vQuoteBalance;
+        }
+
+        spotEngine.applyDeltas(spotDeltas);
+        perpEngine.applyDeltas(perpDeltas);
     }
 
     function _settlePnl(bytes32 subaccount, uint256 productIds) internal {

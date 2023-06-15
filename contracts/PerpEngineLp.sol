@@ -60,7 +60,7 @@ abstract contract PerpEngineLp is PerpEngineState {
         lpStates[productId] = lpState;
         balances[productId][subaccount] = balance;
 
-        emit MintLp(productId, subaccount, toMint, amountBase, amountQuote);
+        _balanceUpdate(productId, subaccount);
     }
 
     function burnLp(
@@ -112,7 +112,7 @@ abstract contract PerpEngineLp is PerpEngineState {
         states[productId] = state;
         balances[productId][subaccount] = balance;
 
-        emit BurnLp(productId, subaccount, amountLp, amountBase, amountQuote);
+        _balanceUpdate(productId, subaccount);
     }
 
     function swapLp(
@@ -145,6 +145,7 @@ abstract contract PerpEngineLp is PerpEngineState {
         lpState.base += baseSwapped;
         lpState.quote += quoteSwapped;
         lpStates[productId] = lpState;
+        _productUpdate(productId);
     }
 
     function swapLp(
@@ -169,6 +170,7 @@ abstract contract PerpEngineLp is PerpEngineState {
         lpState.base += baseDelta;
         lpState.quote += quoteDelta;
         lpStates[productId] = lpState;
+        _productUpdate(productId);
         return (baseDelta, quoteDelta);
     }
 
@@ -212,6 +214,8 @@ abstract contract PerpEngineLp is PerpEngineState {
             states[productId] = state;
             balances[productId][liquidatee] = liquidateeBalance;
             balances[productId][liquidator] = liquidatorBalance;
+            _balanceUpdate(productId, liquidator);
+            _balanceUpdate(productId, liquidatee);
         }
     }
 }

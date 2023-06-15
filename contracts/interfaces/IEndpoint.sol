@@ -29,7 +29,7 @@ interface IEndpoint is IVersion {
         SwapAMM,
         MatchOrderAMM,
         DumpFees,
-        ClaimSequencerFee,
+        ClaimSequencerFees,
         PerpTick,
         ManualAssert,
         Rebate,
@@ -153,6 +153,10 @@ interface IEndpoint is IVersion {
         // can be stored by using int64.
         int64 makerRateX18;
         int64 takerRateX18;
+    }
+
+    struct ClaimSequencerFees {
+        bytes32 subaccount;
     }
 
     struct UpdatePrice {

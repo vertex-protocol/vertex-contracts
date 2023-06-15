@@ -47,6 +47,11 @@ interface IClearinghouse is
 
     function updateFeeRates(IEndpoint.UpdateFeeRates calldata tx) external;
 
+    function claimSequencerFees(
+        IEndpoint.ClaimSequencerFees calldata tx,
+        int128[] calldata fees
+    ) external;
+
     /// @notice Retrieve quote ERC20 address
     function getQuote() external view returns (address);
 

@@ -74,10 +74,8 @@ contract ClearinghouseLiq is
         uint32 perpId;
         int128 perpAmount;
         int128 perpVQuote;
-        int128 perpPriceX18;
         uint32 spotId;
         int128 spotAmount;
-        int128 spotPriceX18;
         int128 basisAmount;
     }
 
@@ -87,22 +85,23 @@ contract ClearinghouseLiq is
         uint32 groupId,
         bytes32 subaccount
     ) internal view returns (HealthGroupSummary memory summary) {
-        HealthGroup memory group = healthGroups[groupId];
+        HealthGroup memory group = HealthGroup(
+            groupId * 2 + 1,
+            groupId * 2 + 2
+        );
 
-        if (group.spotId != 0) {
+        {
             (, ISpotEngine.Balance memory balance) = spotEngine
                 .getStateAndBalance(group.spotId, subaccount);
             summary.spotAmount = balance.amount;
-            summary.spotPriceX18 = getOraclePriceX18(group.spotId);
             summary.spotId = group.spotId;
         }
 
-        if (group.perpId != 0) {
+        {
             (, IPerpEngine.Balance memory balance) = perpEngine
                 .getStateAndBalance(group.perpId, subaccount);
             summary.perpAmount = balance.amount;
             summary.perpVQuote = balance.vQuoteBalance;
-            summary.perpPriceX18 = getOraclePriceX18(group.perpId);
             summary.perpId = group.perpId;
         }
 

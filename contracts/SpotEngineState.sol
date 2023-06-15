@@ -347,7 +347,9 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             _updateBalanceWithoutDelta(quoteState, lpState.quote);
             lpStates[productId] = lpState;
             states[productId] = state;
+            _productUpdate(productId);
         }
         states[QUOTE_PRODUCT_ID] = quoteState;
+        _productUpdate(QUOTE_PRODUCT_ID);
     }
 }

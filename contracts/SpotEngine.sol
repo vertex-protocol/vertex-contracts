@@ -62,7 +62,8 @@ contract SpotEngine is SpotEngineLP, Version {
         } else if (productId == 3) {
             return 6e14;
         } else if (productId == 5) {
-            return 1e18;
+            // ARB placeholder
+            return 0;
         }
         revert(ERR_INVALID_PRODUCT);
     }
@@ -156,7 +157,7 @@ contract SpotEngine is SpotEngineLP, Version {
 
             balances[productId][subaccount].balance = balance;
 
-            emit ProductUpdate(productId);
+            _balanceUpdate(productId, subaccount);
         }
     }
 
@@ -176,8 +177,6 @@ contract SpotEngine is SpotEngineLP, Version {
 
                 state.cumulativeDepositsMultiplierX18 = (totalDeposited +
                     balance.amount).div(state.totalDepositsNormalized);
-
-                emit SocializeProduct(productId, -balance.amount);
 
                 state.totalBorrowsNormalized += balance.amount.div(
                     state.cumulativeBorrowsMultiplierX18
@@ -202,6 +201,7 @@ contract SpotEngine is SpotEngineLP, Version {
                 }
 
                 states[productId] = state;
+                _balanceUpdate(productId, subaccount);
             }
         }
     }

@@ -58,6 +58,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     mapping(bytes32 => address) linkedSigners;
 
+    int128 public slowModeFees;
+
     string constant LIQUIDATE_SUBACCOUNT_SIGNATURE =
         "LiquidateSubaccount(bytes32 sender,bytes32 liquidatee,uint8 mode,uint32 healthGroup,int128 amount,uint64 nonce)";
     string constant WITHDRAW_COLLATERAL_SIGNATURE =
@@ -291,7 +293,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             require(sender == owner(), "only owner can add/update products");
         } else {
             safeTransferFrom(quote, sender, uint256(int256(SLOW_MODE_FEE)));
-            sequencerFee[0] += SLOW_MODE_FEE;
+            slowModeFees += SLOW_MODE_FEE;
         }
 
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
@@ -581,32 +583,18 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             for (uint32 i = 1; i < numProducts; i++) {
                 IOffchainBook(books[i]).dumpFees();
             }
-        } else if (txType == TransactionType.ClaimSequencerFee) {
-            uint32 numProducts = clearinghouse.getNumProducts();
-            uint32[] memory spotIds = spotEngine.getProductIds();
-
-            IProductEngine.ProductDelta[]
-                memory deltas = new IProductEngine.ProductDelta[](
-                    spotIds.length
-                );
-
-            for (uint32 i = 1; i < numProducts; i++) {
-                deltas[0].amountDelta += IOffchainBook(books[i])
-                    .claimSequencerFee();
-            }
-
-            bytes32 subaccount = bytes32(
-                abi.encodePacked(sequencer, bytes12(0))
+        } else if (txType == TransactionType.ClaimSequencerFees) {
+            ClaimSequencerFees memory txn = abi.decode(
+                transaction[1:],
+                (ClaimSequencerFees)
             );
-
+            uint32[] memory spotIds = spotEngine.getProductIds();
+            int128[] memory fees = new int128[](spotIds.length);
             for (uint256 i = 0; i < spotIds.length; i++) {
-                deltas[i].productId = spotIds[i];
-                deltas[i].subaccount = subaccount;
-                deltas[i].amountDelta += sequencerFee[spotIds[i]];
+                fees[i] = sequencerFee[spotIds[i]];
                 sequencerFee[spotIds[i]] = 0;
             }
-
-            spotEngine.applyDeltas(deltas);
+            clearinghouse.claimSequencerFees(txn, fees);
         } else if (txType == TransactionType.ManualAssert) {
             ManualAssert memory txn = abi.decode(
                 transaction[1:],

@@ -59,7 +59,8 @@ abstract contract SpotEngineLP is SpotEngineState {
         states[productId] = base;
         states[QUOTE_PRODUCT_ID] = quote;
 
-        emit MintLp(productId, subaccount, toMint, amountBase, amountQuote);
+        _balanceUpdate(productId, subaccount);
+        _balanceUpdate(QUOTE_PRODUCT_ID, subaccount);
     }
 
     function burnLp(
@@ -113,7 +114,8 @@ abstract contract SpotEngineLP is SpotEngineState {
         states[productId] = base;
         states[QUOTE_PRODUCT_ID] = quote;
 
-        emit BurnLp(productId, subaccount, amountLp, amountBase, amountQuote);
+        _balanceUpdate(productId, subaccount);
+        _balanceUpdate(QUOTE_PRODUCT_ID, subaccount);
     }
 
     function swapLp(
@@ -156,6 +158,7 @@ abstract contract SpotEngineLP is SpotEngineState {
             quoteDepositsMultiplierX18
         );
 
+        _productUpdate(productId);
         // actual balance updates for the subaccount happen in OffchainBook
     }
 
@@ -191,7 +194,7 @@ abstract contract SpotEngineLP is SpotEngineState {
         states[QUOTE_PRODUCT_ID].totalDepositsNormalized += quoteDelta.div(
             quoteDepositsMultiplierX18
         );
-
+        _productUpdate(productId);
         return (baseDelta, quoteDelta);
     }
 
@@ -246,5 +249,7 @@ abstract contract SpotEngineLP is SpotEngineState {
         balances[QUOTE_PRODUCT_ID][liquidatee].balance = liquidateeQuote;
         balances[QUOTE_PRODUCT_ID][liquidator].balance = liquidatorQuote;
         states[QUOTE_PRODUCT_ID] = quote;
+        _balanceUpdate(QUOTE_PRODUCT_ID, liquidator);
+        _balanceUpdate(QUOTE_PRODUCT_ID, liquidatee);
     }
 }
