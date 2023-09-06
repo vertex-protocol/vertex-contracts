@@ -140,11 +140,16 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         external
         onlyEndpoint
     {
+        require(dt <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         int128 dtX18 = int128(dt).fromInt();
         for (uint32 i = 0; i < avgPriceDiffs.length; i++) {
             uint32 productId = productIds[i];
-            LpState memory lpState = lpStates[productId];
             State memory state = states[productId];
+            if (state.openInterest == 0) {
+                continue;
+            }
+
+            LpState memory lpState = lpStates[productId];
 
             {
                 int128 indexPriceX18 = getOraclePriceX18(productId);

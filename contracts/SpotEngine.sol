@@ -58,12 +58,37 @@ contract SpotEngine is SpotEngineLP, Version {
         if (productId == QUOTE_PRODUCT_ID) {
             return 1e18;
         } else if (productId == 1) {
+            // BTC
             return 4e13;
         } else if (productId == 3) {
+            // ETH
             return 6e14;
         } else if (productId == 5) {
-            // ARB placeholder
+            // ARB
+            return 1e18;
+        } else if (
+            productId == 7 ||
+            productId == 9 ||
+            productId == 11 ||
+            productId == 13 ||
+            productId == 15 ||
+            productId == 17 ||
+            productId == 19 ||
+            productId == 21 ||
+            productId == 23 ||
+            productId == 25 ||
+            productId == 27 ||
+            productId == 29 ||
+            productId == 33 ||
+            productId == 35 ||
+            productId == 37 ||
+            productId == 39
+        ) {
+            // placeholders
             return 0;
+        } else if (productId == 31) {
+            // USDT
+            return 1e18;
         }
         revert(ERR_INVALID_PRODUCT);
     }
@@ -116,7 +141,9 @@ contract SpotEngine is SpotEngineLP, Version {
             riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
                 riskStore.shortWeightInitial >
                 riskStore.shortWeightMaintenance &&
-                configs[tx.productId].token == tx.config.token,
+                (configs[tx.productId].token ==
+                    address(uint160(tx.productId)) ||
+                    configs[tx.productId].token == tx.config.token),
             ERR_BAD_PRODUCT_CONFIG
         );
         markets[tx.productId].modifyConfig(
@@ -193,6 +220,7 @@ contract SpotEngine is SpotEngineLP, Version {
                         LpState memory lpState = lpStates[baseProductId];
                         _updateBalanceWithoutDelta(state, lpState.quote);
                         lpStates[baseProductId] = lpState;
+                        _productUpdate(baseProductId);
                     }
                 } else {
                     LpState memory lpState = lpStates[productId];

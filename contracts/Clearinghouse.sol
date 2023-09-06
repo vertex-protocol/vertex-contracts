@@ -375,6 +375,7 @@ contract Clearinghouse is
         virtual
         onlyEndpoint
     {
+        require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
@@ -410,6 +411,7 @@ contract Clearinghouse is
         virtual
         onlyEndpoint
     {
+        require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         IERC20Base token = IERC20Base(quote);
         int256 multiplier = int256(10**(MAX_DECIMALS - token.decimals()));
         int128 amount = int128(txn.amount) * int128(multiplier);
@@ -432,6 +434,7 @@ contract Clearinghouse is
         virtual
         onlyEndpoint
     {
+        require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );

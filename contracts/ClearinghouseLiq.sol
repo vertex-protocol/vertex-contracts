@@ -369,10 +369,16 @@ contract ClearinghouseLiq is
                 );
 
                 // settle positive pnl against the liquidator
-                int128 positionPnl = perpEngine.getPositionPnl(
-                    groupSummary.perpId,
-                    txn.liquidatee
-                );
+                int128 positionPnl;
+                if (groupSummary.basisAmount == 0) {
+                    positionPnl = groupSummary.perpVQuote;
+                } else {
+                    positionPnl = perpEngine.getPositionPnl(
+                        groupSummary.perpId,
+                        txn.liquidatee
+                    );
+                }
+
                 if (positionPnl > 0) {
                     settlePnlAgainstLiquidator(
                         spotEngine,
@@ -398,14 +404,12 @@ contract ClearinghouseLiq is
             .getMarket()
             .sizeIncrement;
 
-        {
+        if (summary.basisAmount != 0) {
             int128 excessBasisAmount = summary.basisAmount %
                 vars.perpSizeIncrement;
-            if (excessBasisAmount != 0) {
-                summary.basisAmount -= excessBasisAmount;
-                summary.spotAmount += excessBasisAmount;
-                summary.perpAmount -= excessBasisAmount;
-            }
+            summary.basisAmount -= excessBasisAmount;
+            summary.spotAmount += excessBasisAmount;
+            summary.perpAmount -= excessBasisAmount;
         }
 
         if (txn.mode != uint8(IEndpoint.LiquidationMode.SPOT)) {

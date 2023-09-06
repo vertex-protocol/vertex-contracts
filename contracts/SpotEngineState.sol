@@ -332,6 +332,7 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
     }
 
     function updateStates(uint128 dt) external onlyEndpoint {
+        require(dt <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         State memory quoteState = states[QUOTE_PRODUCT_ID];
         _updateState(QUOTE_PRODUCT_ID, quoteState, dt);
 

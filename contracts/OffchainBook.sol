@@ -123,7 +123,7 @@ contract OffchainBook is
     }
 
     function _expired(uint64 expiration) internal view returns (bool) {
-        return expiration & ((1 << 62) - 1) <= getOracleTime();
+        return expiration & ((1 << 58) - 1) <= getOracleTime();
     }
 
     function _validateOrder(

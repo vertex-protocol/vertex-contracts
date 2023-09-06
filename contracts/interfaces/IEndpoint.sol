@@ -243,6 +243,13 @@ interface IEndpoint is IVersion {
         uint128 amount
     ) external;
 
+    function depositCollateralWithReferral(
+        bytes12 subaccountName,
+        uint32 productId,
+        uint128 amount,
+        string calldata referralCode
+    ) external;
+
     function setBook(uint32 productId, address book) external;
 
     function submitTransactionsChecked(

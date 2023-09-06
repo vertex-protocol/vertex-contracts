@@ -60,6 +60,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     int128 public slowModeFees;
 
+    // invitee -> referralCode
+    mapping(address => string) public referralCodes;
+
     string constant LIQUIDATE_SUBACCOUNT_SIGNATURE =
         "LiquidateSubaccount(bytes32 sender,bytes32 liquidatee,uint8 mode,uint32 healthGroup,int128 amount,uint64 nonce)";
     string constant WITHDRAW_COLLATERAL_SIGNATURE =
@@ -234,9 +237,40 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint32 productId,
         uint128 amount
     ) external {
-        bytes32 subaccount = bytes32(
-            abi.encodePacked(msg.sender, subaccountName)
+        _depositCollateral(
+            msg.sender,
+            subaccountName,
+            productId,
+            amount,
+            DEFAULT_REFERRAL_CODE
         );
+    }
+
+    function depositCollateralWithReferral(
+        bytes12 subaccountName,
+        uint32 productId,
+        uint128 amount,
+        string calldata referralCode
+    ) external {
+        require(bytes(referralCode).length != 0, ERR_INVALID_REFERRAL_CODE);
+
+        _depositCollateral(
+            msg.sender,
+            subaccountName,
+            productId,
+            amount,
+            referralCode
+        );
+    }
+
+    function _depositCollateral(
+        address sender,
+        bytes12 subaccountName,
+        uint32 productId,
+        uint128 amount,
+        string memory referralCode
+    ) internal {
+        bytes32 subaccount = bytes32(abi.encodePacked(sender, subaccountName));
 
         DepositCollateral memory txn = DepositCollateral({
             sender: subaccount,
@@ -251,6 +285,11 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         );
 
         this.submitSlowModeTransaction(transaction);
+
+        bool isNewSender = bytes(referralCodes[sender]).length == 0;
+        if (isNewSender) {
+            referralCodes[sender] = referralCode;
+        }
     }
 
     function requireUnsanctioned(address sender) internal view virtual {

@@ -7,17 +7,21 @@ uint32 constant QUOTE_PRODUCT_ID = 0;
 /// @dev Fees account
 bytes32 constant FEES_ACCOUNT = bytes32(0);
 
+string constant DEFAULT_REFERRAL_CODE = "-1";
+
 uint128 constant MINIMUM_LIQUIDITY = 10**3;
 
 int128 constant ONE = 10**18;
 
 uint8 constant MAX_DECIMALS = 18;
 
-int128 constant TAKER_SEQUENCER_FEE = 4e17; // $0.40
+int128 constant TAKER_SEQUENCER_FEE = 1e17; // $0.10
 
 int128 constant SLOW_MODE_FEE = 1000000; // $1
 
 int128 constant LIQUIDATION_FEE = 1e18; // $1
 int128 constant HEALTHCHECK_FEE = 1e18; // $1
 
-uint64 constant VERSION = 16;
+uint64 constant VERSION = 20;
+
+uint128 constant INT128_MAX = uint128(type(int128).max);
