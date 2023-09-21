@@ -67,7 +67,7 @@ abstract contract SpotEngineLP is SpotEngineState {
         uint32 productId,
         bytes32 subaccount,
         int128 amountLp
-    ) public returns (int128 amountQuote) {
+    ) public returns (int128 amountBase, int128 amountQuote) {
         checkCanApplyDeltas();
         require(amountLp > 0, ERR_INVALID_LP_AMOUNT);
 
@@ -80,13 +80,13 @@ abstract contract SpotEngineLP is SpotEngineState {
             amountLp = lpBalance.amount;
         }
         if (amountLp == 0) {
-            return 0;
+            return (0, 0);
         }
 
         require(lpBalance.amount >= amountLp, ERR_INSUFFICIENT_LP);
         lpBalance.amount -= amountLp;
 
-        int128 amountBase = int128(
+        amountBase = int128(
             (int256(amountLp) * lpState.base.amount) / lpState.supply
         );
         amountQuote = int128(
@@ -206,7 +206,7 @@ abstract contract SpotEngineLP is SpotEngineState {
         int128 liquidationRewards = 0;
         for (uint128 i = 0; i < productIds.length; ++i) {
             uint32 productId = productIds[i];
-            int128 amountQuote = burnLp(
+            (, int128 amountQuote) = burnLp(
                 productId,
                 liquidatee,
                 type(int128).max

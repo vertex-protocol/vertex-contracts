@@ -67,7 +67,7 @@ abstract contract PerpEngineLp is PerpEngineState {
         uint32 productId,
         bytes32 subaccount,
         int128 amountLp
-    ) public returns (int128 amountQuote) {
+    ) public returns (int128 amountBase, int128 amountQuote) {
         checkCanApplyDeltas();
         require(amountLp > 0, ERR_INVALID_LP_AMOUNT);
         int128 sizeIncrement = IOffchainBook(getOrderbook(productId))
@@ -85,13 +85,13 @@ abstract contract PerpEngineLp is PerpEngineState {
             amountLp = lpBalance.amount;
         }
         if (amountLp == 0) {
-            return 0;
+            return (0, 0);
         }
 
         require(lpBalance.amount >= amountLp, ERR_INSUFFICIENT_LP);
         lpBalance.amount -= amountLp;
 
-        int128 amountBase = MathHelper.floor(
+        amountBase = MathHelper.floor(
             int128((int256(amountLp) * lpState.base) / lpState.supply),
             sizeIncrement
         );
@@ -181,7 +181,7 @@ abstract contract PerpEngineLp is PerpEngineState {
     ) external returns (int128 liquidationFees) {
         for (uint128 i = 0; i < productIds.length; ++i) {
             uint32 productId = productIds[i];
-            int128 amountQuote = burnLp(
+            (, int128 amountQuote) = burnLp(
                 productId,
                 liquidatee,
                 type(int128).max

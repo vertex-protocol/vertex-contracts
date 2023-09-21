@@ -68,7 +68,7 @@ interface IProductEngine is IProductEngineState {
         bytes32 subaccount,
         // passing 0 here means to burn all
         int128 amountLp
-    ) external returns (int128);
+    ) external returns (int128, int128);
 
     function decomposeLps(
         bytes32 liquidatee,

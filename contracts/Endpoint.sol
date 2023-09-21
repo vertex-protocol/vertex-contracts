@@ -63,6 +63,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
     // invitee -> referralCode
     mapping(address => string) public referralCodes;
 
+    // address -> whether can call `BurnLpAndTransfer`.
+    mapping(address => bool) transferableWallets;
+
     string constant LIQUIDATE_SUBACCOUNT_SIGNATURE =
         "LiquidateSubaccount(bytes32 sender,bytes32 liquidatee,uint8 mode,uint32 healthGroup,int128 amount,uint64 nonce)";
     string constant WITHDRAW_COLLATERAL_SIGNATURE =
@@ -330,6 +333,11 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             handleDepositTransfer(token, sender, uint256(txn.amount));
         } else if (txType == TransactionType.UpdateProduct) {
             require(sender == owner(), "only owner can add/update products");
+        } else if (txType == TransactionType.BurnLpAndTransfer) {
+            require(
+                transferableWallets[sender],
+                "only transferable wallets can transfer funds inside vertex."
+            );
         } else {
             safeTransferFrom(quote, sender, uint256(int256(SLOW_MODE_FEE)));
             slowModeFees += SLOW_MODE_FEE;
@@ -448,10 +456,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             );
             clearinghouse.depositInsurance(txn);
         } else if (txType == TransactionType.MintLp) {
-            // TODO: temporarily disabled; re-enable once better support for LP liquidity on orderbook
-            //            MintLp memory txn = abi.decode(transaction[1:], (MintLp));
-            //            validateSender(txn.sender, sender);
-            //            clearinghouse.mintLp(txn);
+            MintLp memory txn = abi.decode(transaction[1:], (MintLp));
+            validateSender(txn.sender, sender);
+            clearinghouse.mintLpSlowMode(txn);
         } else if (txType == TransactionType.BurnLp) {
             BurnLp memory txn = abi.decode(transaction[1:], (BurnLp));
             validateSender(txn.sender, sender);
@@ -471,6 +478,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             LinkSigner memory txn = abi.decode(transaction[1:], (LinkSigner));
             validateSender(txn.sender, sender);
             linkedSigners[txn.sender] = address(uint160(bytes20(txn.signer)));
+        } else if (txType == TransactionType.BurnLpAndTransfer) {
+            BurnLpAndTransfer memory txn = abi.decode(
+                transaction[1:],
+                (BurnLpAndTransfer)
+            );
+            validateSender(txn.sender, sender);
+            _recordSubaccount(txn.recipient);
+            clearinghouse.burnLpAndTransfer(txn);
         } else {
             revert("Invalid transaction type");
         }
@@ -642,8 +657,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             perpEngine.manualAssert(txn.openInterests);
             spotEngine.manualAssert(txn.totalDeposits, txn.totalBorrows);
         } else if (txType == TransactionType.Rebate) {
-            Rebate memory txn = abi.decode(transaction[1:], (Rebate));
-            clearinghouse.rebate(txn);
+            // deprecated.
         } else if (txType == TransactionType.LinkSigner) {
             SignedLinkSigner memory signedTx = abi.decode(
                 transaction[1:],
@@ -779,5 +793,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     function getNonce(address sender) external view returns (uint64) {
         return nonces[sender];
+    }
+
+    function registerTransferableWallet(address wallet, bool transferable)
+        external
+        onlyOwner
+    {
+        transferableWallets[wallet] = transferable;
     }
 }

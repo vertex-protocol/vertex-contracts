@@ -482,6 +482,26 @@ contract Clearinghouse is
         require(!_isUnderInitial(txn.sender), ERR_SUBACCT_HEALTH);
     }
 
+    function mintLpSlowMode(IEndpoint.MintLp calldata txn)
+        external
+        virtual
+        onlyEndpoint
+    {
+        require(
+            txn.productId != QUOTE_PRODUCT_ID &&
+                productToEngine[txn.productId].getEngineType() ==
+                IProductEngine.EngineType.SPOT
+        );
+        productToEngine[txn.productId].mintLp(
+            txn.productId,
+            txn.sender,
+            int128(txn.amountBase),
+            int128(txn.quoteAmountLow),
+            int128(txn.quoteAmountHigh)
+        );
+        require(!_isUnderInitial(txn.sender), ERR_SUBACCT_HEALTH);
+    }
+
     function burnLp(IEndpoint.BurnLp calldata txn)
         external
         virtual
@@ -494,38 +514,47 @@ contract Clearinghouse is
         );
     }
 
-    function rebate(IEndpoint.Rebate calldata txn)
+    function burnLpAndTransfer(IEndpoint.BurnLpAndTransfer calldata txn)
         external
         virtual
         onlyEndpoint
     {
+        (int128 amountBase, int128 amountQuote) = productToEngine[txn.productId]
+            .burnLp(txn.productId, txn.sender, int128(txn.amount));
+
         IProductEngine.ProductDelta[]
-            memory deltas = IProductEngine.ProductDelta[](
-                new IProductEngine.ProductDelta[](txn.subaccounts.length + 1)
-            );
-        int128 totalRebates = 0;
-        for (uint128 i = 0; i < txn.subaccounts.length; ++i) {
-            require(txn.amounts[i] >= 0);
-            totalRebates += txn.amounts[i];
-            deltas[i] = IProductEngine.ProductDelta({
-                productId: QUOTE_PRODUCT_ID,
-                subaccount: txn.subaccounts[i],
-                amountDelta: txn.amounts[i],
-                vQuoteDelta: 0
-            });
-        }
-        deltas[txn.subaccounts.length] = IProductEngine.ProductDelta({
+            memory deltas = new IProductEngine.ProductDelta[](4);
+
+        deltas[0] = IProductEngine.ProductDelta({
             productId: QUOTE_PRODUCT_ID,
-            subaccount: FEES_ACCOUNT,
-            amountDelta: -totalRebates,
+            subaccount: txn.sender,
+            amountDelta: -amountQuote,
             vQuoteDelta: 0
         });
 
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        spotEngine.applyDeltas(deltas);
-        require(!_isUnderInitial(FEES_ACCOUNT), ERR_SUBACCT_HEALTH);
+        deltas[1] = IProductEngine.ProductDelta({
+            productId: QUOTE_PRODUCT_ID,
+            subaccount: txn.recipient,
+            amountDelta: amountQuote,
+            vQuoteDelta: 0
+        });
+
+        deltas[2] = IProductEngine.ProductDelta({
+            productId: txn.productId,
+            subaccount: txn.sender,
+            amountDelta: -amountBase,
+            vQuoteDelta: -amountQuote
+        });
+
+        deltas[3] = IProductEngine.ProductDelta({
+            productId: txn.productId,
+            subaccount: txn.recipient,
+            amountDelta: amountBase,
+            vQuoteDelta: amountQuote
+        });
+
+        productToEngine[txn.productId].applyDeltas(deltas);
+        require(!_isUnderInitial(txn.sender), ERR_SUBACCT_HEALTH);
     }
 
     function updateFeeRates(IEndpoint.UpdateFeeRates calldata txn)

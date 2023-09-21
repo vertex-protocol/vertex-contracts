@@ -15,4 +15,10 @@ interface IProductEngineState {
 
     /// @notice Returns orderbook for a product ID
     function getOrderbook(uint32 productId) external view returns (address);
+
+    /// @notice Returns balance amount for some subaccount / productId
+    function getBalanceAmount(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (int128);
 }

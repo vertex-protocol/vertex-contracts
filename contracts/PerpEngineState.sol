@@ -82,6 +82,14 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         return balance;
     }
 
+    function getBalanceAmount(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (int128)
+    {
+        return getBalance(productId, subaccount).amount;
+    }
+
     function hasBalance(uint32 productId, bytes32 subaccount)
         external
         view
@@ -140,7 +148,6 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         external
         onlyEndpoint
     {
-        require(dt <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         int128 dtX18 = int128(dt).fromInt();
         for (uint32 i = 0; i < avgPriceDiffs.length; i++) {
             uint32 productId = productIds[i];
@@ -148,6 +155,7 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
             if (state.openInterest == 0) {
                 continue;
             }
+            require(dt < 7 * SECONDS_PER_DAY, ERR_INVALID_TIME);
 
             LpState memory lpState = lpStates[productId];
 

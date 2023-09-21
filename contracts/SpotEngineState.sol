@@ -275,6 +275,14 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         return balanceNormalizedToBalance(state, balance);
     }
 
+    function getBalanceAmount(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (int128)
+    {
+        return getBalance(productId, subaccount).amount;
+    }
+
     function hasBalance(uint32 productId, bytes32 subaccount)
         external
         view
@@ -332,7 +340,6 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
     }
 
     function updateStates(uint128 dt) external onlyEndpoint {
-        require(dt <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         State memory quoteState = states[QUOTE_PRODUCT_ID];
         _updateState(QUOTE_PRODUCT_ID, quoteState, dt);
 
@@ -342,6 +349,10 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
                 continue;
             }
             State memory state = states[productId];
+            if (state.totalDepositsNormalized == 0) {
+                continue;
+            }
+            require(dt < 7 * SECONDS_PER_DAY, ERR_INVALID_TIME);
             LpState memory lpState = lpStates[productId];
             _updateState(productId, state, dt);
             _updateBalanceWithoutDelta(state, lpState.base);

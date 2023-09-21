@@ -126,6 +126,14 @@ contract OffchainBook is
         return expiration & ((1 << 58) - 1) <= getOracleTime();
     }
 
+    function _isReduceOnly(uint64 expiration) internal view returns (bool) {
+        return ((expiration >> 61) & 1) == 1;
+    }
+
+    function _isTakerFirst(bytes32 orderDigest) internal view returns (bool) {
+        return filledAmounts[orderDigest] == 0;
+    }
+
     function _validateOrder(
         Market memory _market,
         IEndpoint.SignedOrder memory signedOrder,
@@ -135,6 +143,21 @@ contract OffchainBook is
         IEndpoint.Order memory order = signedOrder.order;
         int128 filledAmount = filledAmounts[orderDigest];
         order.amount -= filledAmount;
+
+        if (_isReduceOnly(order.expiration)) {
+            int128 amount = engine.getBalanceAmount(
+                _market.productId,
+                order.sender
+            );
+            if ((order.amount > 0) == (amount > 0)) {
+                order.amount = 0;
+            } else if (order.amount > 0) {
+                order.amount = MathHelper.min(order.amount, -amount);
+            } else if (order.amount < 0) {
+                order.amount = MathHelper.max(order.amount, -amount);
+            }
+        }
+
         return
             (order.priceX18 > 0) &&
             (order.priceX18 % _market.priceIncrementX18 == 0) &&
@@ -320,7 +343,7 @@ contract OffchainBook is
             ERR_INVALID_TAKER
         );
 
-        bool isTakerFirst = takerAmount == taker.order.amount;
+        bool isTakerFirst = _isTakerFirst(takerDigest);
 
         (int128 takerAmountDelta, int128 takerQuoteDelta) = _matchOrderAMM(
             _market,
@@ -435,7 +458,7 @@ contract OffchainBook is
             );
         }
 
-        bool isTakerFirst = takerAmount == taker.order.amount;
+        bool isTakerFirst = _isTakerFirst(ordersInfo.takerDigest);
 
         (int128 takerAmountDelta, int128 takerQuoteDelta) = _matchOrderOrder(
             _market,

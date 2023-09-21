@@ -34,9 +34,12 @@ interface IClearinghouse is
 
     function mintLp(IEndpoint.MintLp calldata tx) external;
 
+    function mintLpSlowMode(IEndpoint.MintLp calldata tx) external;
+
     function burnLp(IEndpoint.BurnLp calldata tx) external;
 
-    function rebate(IEndpoint.Rebate calldata tx) external;
+    function burnLpAndTransfer(IEndpoint.BurnLpAndTransfer calldata tx)
+        external;
 
     function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata tx)
         external;

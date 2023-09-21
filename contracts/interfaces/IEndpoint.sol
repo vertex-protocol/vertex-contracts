@@ -35,7 +35,8 @@ interface IEndpoint is IVersion {
         Rebate,
         UpdateProduct,
         LinkSigner,
-        UpdateFeeRates
+        UpdateFeeRates,
+        BurnLpAndTransfer
     }
 
     struct UpdateProduct {
@@ -235,6 +236,13 @@ interface IEndpoint is IVersion {
     struct Prices {
         int128 spotPriceX18;
         int128 perpPriceX18;
+    }
+
+    struct BurnLpAndTransfer {
+        bytes32 sender;
+        uint32 productId;
+        uint128 amount;
+        bytes32 recipient;
     }
 
     function depositCollateral(
