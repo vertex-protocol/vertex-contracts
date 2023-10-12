@@ -235,6 +235,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         );
     }
 
+    function setReferralCode(address sender, string memory referralCode) internal {
+        if (bytes(referralCodes[sender]).length == 0) {
+            referralCodes[sender] = referralCode;
+        }
+    }
+
     function depositCollateral(
         bytes12 subaccountName,
         uint32 productId,
@@ -287,12 +293,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             encodedTx
         );
 
+        setReferralCode(sender, referralCode);
         this.submitSlowModeTransaction(transaction);
-
-        bool isNewSender = bytes(referralCodes[sender]).length == 0;
-        if (isNewSender) {
-            referralCodes[sender] = referralCode;
-        }
     }
 
     function requireUnsanctioned(address sender) internal view virtual {
@@ -322,6 +324,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 spotEngine.getConfig(txn.productId).token
             );
             require(address(token) != address(0));
+            setReferralCode(sender, DEFAULT_REFERRAL_CODE);
             handleDepositTransfer(token, sender, uint256(txn.amount));
         } else if (txType == TransactionType.DepositInsurance) {
             DepositInsurance memory txn = abi.decode(

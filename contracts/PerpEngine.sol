@@ -244,6 +244,7 @@ contract PerpEngine is PerpEngineLp, Version {
                 );
                 insurance -= insuranceCover;
                 balance.vQuoteBalance += insuranceCover;
+                state.availableSettle += insuranceCover;
 
                 // actually socialize if still not enough
                 if (balance.vQuoteBalance < 0) {
@@ -271,9 +272,9 @@ contract PerpEngine is PerpEngineLp, Version {
                         .cumulativeFundingLongX18;
 
                     lpStates[productId] = lpState;
-                    states[productId] = state;
                     balance.vQuoteBalance = 0;
                 }
+                states[productId] = state;
                 balances[productId][subaccount] = balance;
                 _balanceUpdate(productId, subaccount);
             }

@@ -169,7 +169,6 @@ contract OffchainBook is
             ) &&
             // valid amount
             (order.amount != 0) &&
-            (order.amount % _market.sizeIncrement == 0) &&
             !_expired(order.expiration);
     }
 
@@ -248,8 +247,6 @@ contract OffchainBook is
             );
         }
 
-        require(baseDelta % market.sizeIncrement == 0, ERR_INVALID_MAKER);
-
         (int128 baseSwapped, int128 quoteSwapped) = engine.swapLp(
             _market.productId,
             baseDelta,
@@ -274,6 +271,8 @@ contract OffchainBook is
         } else {
             return (0, 0);
         }
+
+        takerAmountDelta -= takerAmountDelta % _market.sizeIncrement;
 
         int128 makerQuoteDelta = takerAmountDelta.mul(maker.priceX18);
 
