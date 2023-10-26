@@ -130,6 +130,14 @@ contract Clearinghouse is
                     ISpotEngine.Balance memory balance
                 ) = spotEngine.getBalances(group.spotId, subaccount);
 
+                if (group.spotId == VRTX_PRODUCT_ID) {
+                    // health will be negative as long as VRTX balance is negative,
+                    // so that nobody can borrow it.
+                    if (balance.amount < 0) {
+                        return -ONE;
+                    }
+                }
+
                 if (lpBalance.amount != 0) {
                     ISpotEngine.LpState memory lpState = spotEngine.getLpState(
                         group.spotId
@@ -720,5 +728,13 @@ contract Clearinghouse is
         onlyOwner
     {
         clearinghouseLiq = _clearinghouseLiq;
+    }
+
+    function getAllBooks() external view returns (address[] memory) {
+        address[] memory allBooks = new address[](numProducts);
+        for (uint32 productId = 0; productId < numProducts; productId++) {
+            allBooks[productId] = IEndpoint(getEndpoint()).getBook(productId);
+        }
+        return allBooks;
     }
 }

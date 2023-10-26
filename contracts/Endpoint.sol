@@ -58,7 +58,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     mapping(bytes32 => address) linkedSigners;
 
-    int128 public slowModeFees;
+    int128 private slowModeFees;
 
     // invitee -> referralCode
     mapping(address => string) public referralCodes;
@@ -128,38 +128,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         require(subaccountIds[subaccount] != 0, ERR_REQUIRES_DEPOSIT);
     }
 
-    function getNumSubaccounts() external view returns (uint64) {
-        return numSubaccounts;
-    }
-
-    function getSubaccountId(bytes32 subaccount)
-        external
-        view
-        returns (uint64)
-    {
-        return subaccountIds[subaccount];
-    }
-
-    function getLinkedSigner(bytes32 subaccount)
-        external
-        view
-        returns (address)
-    {
-        return linkedSigners[subaccount];
-    }
-
-    function getSubaccountById(uint64 subaccountId)
-        external
-        view
-        returns (bytes32)
-    {
-        return subaccounts[subaccountId];
-    }
-
     function validateNonce(bytes32 sender, uint64 nonce) internal virtual {
         require(
             nonce == nonces[address(uint160(bytes20(sender)))]++,
-            "Invalid nonce"
+            ERR_WRONG_NONCE
         );
     }
 
@@ -231,11 +203,13 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         require(
             address(uint160(bytes20(txSender))) == sender ||
                 sender == address(this),
-            "cannot send slow mode transaction for another address"
+            ERR_SLOW_MODE_WRONG_SENDER
         );
     }
 
-    function setReferralCode(address sender, string memory referralCode) internal {
+    function setReferralCode(address sender, string memory referralCode)
+        internal
+    {
         if (bytes(referralCodes[sender]).length == 0) {
             referralCodes[sender] = referralCode;
         }
@@ -246,9 +220,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint32 productId,
         uint128 amount
     ) external {
-        _depositCollateral(
-            msg.sender,
-            subaccountName,
+        depositCollateralWithReferral(
+            bytes32(abi.encodePacked(msg.sender, subaccountName)),
             productId,
             amount,
             DEFAULT_REFERRAL_CODE
@@ -261,49 +234,65 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint128 amount,
         string calldata referralCode
     ) external {
-        require(bytes(referralCode).length != 0, ERR_INVALID_REFERRAL_CODE);
-
-        _depositCollateral(
-            msg.sender,
-            subaccountName,
+        depositCollateralWithReferral(
+            bytes32(abi.encodePacked(msg.sender, subaccountName)),
             productId,
             amount,
             referralCode
         );
     }
 
-    function _depositCollateral(
-        address sender,
-        bytes12 subaccountName,
+    function depositCollateralWithReferral(
+        bytes32 subaccount,
         uint32 productId,
         uint128 amount,
         string memory referralCode
-    ) internal {
-        bytes32 subaccount = bytes32(abi.encodePacked(sender, subaccountName));
+    ) public {
+        require(bytes(referralCode).length != 0, ERR_INVALID_REFERRAL_CODE);
 
-        DepositCollateral memory txn = DepositCollateral({
-            sender: subaccount,
-            productId: productId,
-            amount: amount
-        });
+        address sender = address(bytes20(subaccount));
 
-        bytes memory encodedTx = abi.encode(txn);
-        bytes memory transaction = abi.encodePacked(
-            uint8(TransactionType.DepositCollateral),
-            encodedTx
+        // depositor / depositee need to be unsanctioned
+        requireUnsanctioned(msg.sender);
+        requireUnsanctioned(sender);
+
+        // no referral code allowed for remote deposit
+        setReferralCode(
+            sender,
+            sender == msg.sender ? referralCode : DEFAULT_REFERRAL_CODE
         );
 
-        setReferralCode(sender, referralCode);
-        this.submitSlowModeTransaction(transaction);
+        IERC20Base token = IERC20Base(spotEngine.getConfig(productId).token);
+        require(address(token) != address(0));
+        handleDepositTransfer(token, msg.sender, uint256(amount));
+
+        // copy from submitSlowModeTransaction
+        SlowModeConfig memory _slowModeConfig = slowModeConfig;
+
+        // hardcoded to three days
+        uint64 executableAt = uint64(block.timestamp) + 259200;
+        slowModeTxs[_slowModeConfig.txCount++] = SlowModeTx({
+            executableAt: executableAt,
+            sender: sender,
+            tx: abi.encodePacked(
+                uint8(TransactionType.DepositCollateral),
+                abi.encode(
+                    DepositCollateral({
+                        sender: subaccount,
+                        productId: productId,
+                        amount: amount
+                    })
+                )
+            )
+        });
+        slowModeConfig = _slowModeConfig;
     }
 
     function requireUnsanctioned(address sender) internal view virtual {
-        require(!sanctions.isSanctioned(sender), "wallet has been sanctioned");
+        require(!sanctions.isSanctioned(sender), ERR_WALLET_SANCTIONED);
     }
 
     function submitSlowModeTransaction(bytes calldata transaction) external {
-        // TODO: require a bond from the sender except in the case of a deposit
-        // this bond is returned to the executor of the slow mode transaction
         TransactionType txType = TransactionType(uint8(transaction[0]));
 
         // special case for DepositCollateral because upon
@@ -313,19 +302,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         address sender = msg.sender;
 
         if (txType == TransactionType.DepositCollateral) {
-            DepositCollateral memory txn = abi.decode(
-                transaction[1:],
-                (DepositCollateral)
-            );
-            validateSender(txn.sender, sender);
-            sender = address(uint160(bytes20(txn.sender)));
-            // transfer tokens from tx sender to here
-            IERC20Base token = IERC20Base(
-                spotEngine.getConfig(txn.productId).token
-            );
-            require(address(token) != address(0));
-            setReferralCode(sender, DEFAULT_REFERRAL_CODE);
-            handleDepositTransfer(token, sender, uint256(txn.amount));
+            revert();
         } else if (txType == TransactionType.DepositInsurance) {
             DepositInsurance memory txn = abi.decode(
                 transaction[1:],
@@ -335,12 +312,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             require(address(token) != address(0));
             handleDepositTransfer(token, sender, uint256(txn.amount));
         } else if (txType == TransactionType.UpdateProduct) {
-            require(sender == owner(), "only owner can add/update products");
+            require(sender == owner());
         } else if (txType == TransactionType.BurnLpAndTransfer) {
-            require(
-                transferableWallets[sender],
-                "only transferable wallets can transfer funds inside vertex."
-            );
+            require(transferableWallets[sender], ERR_WALLET_NOT_TRANSFERABLE);
         } else {
             safeTransferFrom(quote, sender, uint256(int256(SLOW_MODE_FEE)));
             slowModeFees += SLOW_MODE_FEE;
@@ -359,8 +333,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         // for now, we can just create a separate loop in the engine that queries the remote
         // sequencer for slow mode transactions, and ignore the possibility of a reorgy attack
         slowModeConfig = _slowModeConfig;
-
-        emit SubmitSlowModeTransaction(executableAt, sender, transaction);
     }
 
     function _executeSlowModeTransaction(
@@ -369,14 +341,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
     ) internal {
         require(
             _slowModeConfig.txUpTo < _slowModeConfig.txCount,
-            "no slow mode transactions remaining"
+            ERR_NO_SLOW_MODE_TXS_REMAINING
         );
         SlowModeTx memory txn = slowModeTxs[_slowModeConfig.txUpTo];
         delete slowModeTxs[_slowModeConfig.txUpTo++];
 
         require(
             fromSequencer || (txn.executableAt <= block.timestamp),
-            "oldest slow mode tx cannot be executed yet"
+            ERR_SLOW_TX_TOO_RECENT
         );
 
         uint256 gasRemaining = gasleft();
@@ -405,7 +377,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
         require(
             count <= _slowModeConfig.txCount - _slowModeConfig.txUpTo,
-            "invalid count provided"
+            ERR_INVALID_COUNT
         );
 
         while (count > 0) {
@@ -421,10 +393,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         address sender,
         bytes calldata transaction
     ) public {
-        require(
-            msg.sender == address(this),
-            "only callable to execute slow mode txs"
-        );
+        require(msg.sender == address(this));
         TransactionType txType = TransactionType(uint8(transaction[0]));
         if (txType == TransactionType.LiquidateSubaccount) {
             LiquidateSubaccount memory txn = abi.decode(
@@ -490,7 +459,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             _recordSubaccount(txn.recipient);
             clearinghouse.burnLpAndTransfer(txn);
         } else {
-            revert("Invalid transaction type");
+            revert();
         }
     }
 
@@ -688,15 +657,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             );
             clearinghouse.updateFeeRates(txn);
         } else {
-            revert("Invalid transaction type");
+            revert();
         }
     }
 
     function requireSequencer() internal view virtual {
-        require(
-            msg.sender == sequencer,
-            "Only the sequencer can submit transactions"
-        );
+        require(msg.sender == sequencer);
     }
 
     function submitTransactions(bytes[] calldata transactions) public {
@@ -714,7 +680,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         bytes[] calldata transactions
     ) external {
         requireSequencer();
-        require(idx == nSubmissions, "Invalid submission index");
+        require(idx == nSubmissions, ERR_INVALID_SUBMISSION_INDEX);
         // TODO: if one of these transactions fails this means the sequencer is in an error state
         // we should probably record this, and engage some sort of recovery mode
         submitTransactions(transactions);
@@ -727,7 +693,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
     ) external returns (uint64, uint256) {
         uint256 gasUsed = gasleft();
         requireSequencer();
-        require(idx == nSubmissions, "Invalid submission index");
+        require(idx == nSubmissions, ERR_INVALID_SUBMISSION_INDEX);
         for (uint128 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];
             processTransaction(transaction);
@@ -741,7 +707,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
     function setBook(uint32 productId, address book) external {
         require(
             msg.sender == address(clearinghouse),
-            "Only the clearinghouse can set the book"
+            ERR_ONLY_CLEARINGHOUSE_CAN_SET_BOOK
         );
         books[productId] = book;
     }
@@ -750,10 +716,18 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         return books[productId];
     }
 
+    function getSubaccountId(bytes32 subaccount)
+        external
+        view
+        returns (uint64)
+    {
+        return subaccountIds[subaccount];
+    }
+
     // this is enforced anywhere in addProduct, we generate productId in
     // the following way.
     function _getHealthGroup(uint32 productId) internal pure returns (uint32) {
-        require(productId != 0, "product 0 has no health group");
+        require(productId != 0, ERR_GETTING_ZERO_HEALTH_GROUP);
         return (productId - 1) / 2;
     }
 
@@ -782,7 +756,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
     function getTime() external view returns (uint128) {
         Times memory t = times;
         uint128 _time = t.spotTime > t.perpTime ? t.spotTime : t.perpTime;
-        require(_time != 0, "bad timing");
+        require(_time != 0, ERR_INVALID_TIME);
         return _time;
     }
 

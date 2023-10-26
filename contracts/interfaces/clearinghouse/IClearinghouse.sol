@@ -90,4 +90,6 @@ interface IClearinghouse is
 
     /// @notice Returns the amount of insurance remaining in this clearinghouse
     function getInsurance() external view returns (int128);
+
+    function getAllBooks() external view returns (address[] memory);
 }
