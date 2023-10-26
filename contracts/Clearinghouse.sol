@@ -721,4 +721,12 @@ contract Clearinghouse is
     {
         clearinghouseLiq = _clearinghouseLiq;
     }
+
+    function getAllBooks() external view returns (address[] memory) {
+        address[] memory allBooks = new address[](numProducts);
+        for (uint32 productId = 0; productId < numProducts; productId++) {
+            allBooks[productId] = IEndpoint(getEndpoint()).getBook(productId);
+        }
+        return allBooks;
+    }
 }

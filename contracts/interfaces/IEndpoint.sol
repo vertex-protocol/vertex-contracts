@@ -260,6 +260,8 @@ interface IEndpoint is IVersion {
 
     function setBook(uint32 productId, address book) external;
 
+    function getBook(uint32 productId) external view returns (address);
+
     function submitTransactionsChecked(
         uint64 idx,
         bytes[] calldata transactions

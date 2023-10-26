@@ -235,7 +235,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         );
     }
 
-    function setReferralCode(address sender, string memory referralCode) internal {
+    function setReferralCode(address sender, string memory referralCode)
+        internal
+    {
         if (bytes(referralCodes[sender]).length == 0) {
             referralCodes[sender] = referralCode;
         }
