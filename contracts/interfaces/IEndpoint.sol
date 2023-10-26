@@ -7,12 +7,6 @@ import "./IVersion.sol";
 interface IEndpoint is IVersion {
     event SubmitTransactions();
 
-    event SubmitSlowModeTransaction(
-        uint64 executableAt,
-        address sender,
-        bytes tx
-    );
-
     // events that we parse transactions into
     enum TransactionType {
         LiquidateSubaccount,
@@ -258,6 +252,13 @@ interface IEndpoint is IVersion {
         string calldata referralCode
     ) external;
 
+    function depositCollateralWithReferral(
+        bytes32 subaccount,
+        uint32 productId,
+        uint128 amount,
+        string calldata referralCode
+    ) external;
+
     function setBook(uint32 productId, address book) external;
 
     function getBook(uint32 productId) external view returns (address);
@@ -280,12 +281,12 @@ interface IEndpoint is IVersion {
 
     function getNonce(address sender) external view returns (uint64);
 
-    function getNumSubaccounts() external view returns (uint64);
-
-    function getSubaccountId(bytes32 subaccount) external view returns (uint64);
-
-    function getSubaccountById(uint64 subaccountId)
-        external
-        view
-        returns (bytes32);
+    //    function getNumSubaccounts() external view returns (uint64);
+    //
+    //    function getSubaccountId(bytes32 subaccount) external view returns (uint64);
+    //
+    //    function getSubaccountById(uint64 subaccountId)
+    //        external
+    //        view
+    //        returns (bytes32);
 }

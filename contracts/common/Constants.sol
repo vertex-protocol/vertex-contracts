@@ -22,8 +22,10 @@ int128 constant SLOW_MODE_FEE = 1000000; // $1
 int128 constant LIQUIDATION_FEE = 1e18; // $1
 int128 constant HEALTHCHECK_FEE = 1e18; // $1
 
-uint64 constant VERSION = 24;
+uint64 constant VERSION = 25;
 
 uint128 constant INT128_MAX = uint128(type(int128).max);
 
 uint64 constant SECONDS_PER_DAY = 3600 * 24;
+
+uint32 constant VRTX_PRODUCT_ID = 41;

@@ -84,8 +84,9 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
     ) internal returns (uint32 productId) {
         require(book != address(0));
         require(
-            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
+            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial >=
+                riskStore.shortWeightMaintenance,
             ERR_BAD_PRODUCT_CONFIG
         );
 

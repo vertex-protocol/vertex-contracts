@@ -89,6 +89,9 @@ contract SpotEngine is SpotEngineLP, Version {
         } else if (productId == 31) {
             // USDT
             return 1e18;
+        } else if (productId == 41) {
+            // VRTX
+            return 1e18;
         }
         revert(ERR_INVALID_PRODUCT);
     }
