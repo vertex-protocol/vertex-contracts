@@ -192,7 +192,7 @@ abstract contract PerpEngineLp is PerpEngineState {
                         IClearinghouse(_clearinghouse).getRisk(productId),
                         amountQuote,
                         IProductEngine.HealthType.MAINTENANCE
-                    )) / 2
+                    )) / 50
             );
             int128 fees = rewards.mul(
                 IFeeCalculator(feeCalculator).getLiquidationFeeFractionX18(

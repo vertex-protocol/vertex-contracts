@@ -78,8 +78,9 @@ contract PerpEngine is PerpEngineLp, Version {
         IClearinghouseState.RiskStore memory riskStore = tx.riskStore;
 
         require(
-            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
+            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial >=
+                riskStore.shortWeightMaintenance,
             ERR_BAD_PRODUCT_CONFIG
         );
         markets[tx.productId].modifyConfig(
