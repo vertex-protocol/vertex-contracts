@@ -141,8 +141,8 @@ contract SpotEngine is SpotEngineLP, Version {
         IClearinghouseState.RiskStore memory riskStore = tx.riskStore;
 
         require(
-            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial >
+            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial >=
                 riskStore.shortWeightMaintenance &&
                 (configs[tx.productId].token ==
                     address(uint160(tx.productId)) ||

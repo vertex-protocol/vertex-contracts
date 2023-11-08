@@ -90,11 +90,14 @@ contract ClearinghouseLiq is
             groupId * 2 + 2
         );
 
-        {
+        summary.spotId = group.spotId;
+        summary.perpId = group.perpId;
+
+        // we pretend VRTX balance always being 0 to make it not liquidatable.
+        if (group.spotId != VRTX_PRODUCT_ID) {
             (, ISpotEngine.Balance memory balance) = spotEngine
                 .getStateAndBalance(group.spotId, subaccount);
             summary.spotAmount = balance.amount;
-            summary.spotId = group.spotId;
         }
 
         {
@@ -102,7 +105,6 @@ contract ClearinghouseLiq is
                 .getStateAndBalance(group.perpId, subaccount);
             summary.perpAmount = balance.amount;
             summary.perpVQuote = balance.vQuoteBalance;
-            summary.perpId = group.perpId;
         }
 
         if ((summary.spotAmount > 0) != (summary.perpAmount > 0)) {

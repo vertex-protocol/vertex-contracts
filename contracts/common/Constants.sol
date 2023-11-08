@@ -15,7 +15,7 @@ int128 constant ONE = 10**18;
 
 uint8 constant MAX_DECIMALS = 18;
 
-int128 constant TAKER_SEQUENCER_FEE = 1e17; // $0.10
+int128 constant TAKER_SEQUENCER_FEE = 0; // $0.00
 
 int128 constant SLOW_MODE_FEE = 1000000; // $1
 
