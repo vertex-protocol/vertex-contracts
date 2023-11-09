@@ -45,18 +45,16 @@ abstract contract ClearinghouseRisk is IClearinghouseState, EndpointGated {
         view
         returns (int128)
     {
-        // we want to use the midpoint of maintenance weight and 1
         RiskHelper.Risk memory risk = getRisk(productId);
-
-        // we want to use the midpoint of maintenance weight and 1
         return
             getOraclePriceX18(productId).mul(
-                (ONE +
-                    RiskHelper._getWeightX18(
+                ONE +
+                    (RiskHelper._getWeightX18(
                         risk,
                         amount,
                         IProductEngine.HealthType.MAINTENANCE
-                    )) / 2
+                    ) - ONE) /
+                    5
             );
     }
 
@@ -72,7 +70,7 @@ abstract contract ClearinghouseRisk is IClearinghouseState, EndpointGated {
             perpRisk,
             MathHelper.abs(amount),
             IProductEngine.HealthType.MAINTENANCE
-        ) / 2;
+        ) / 5;
         if (amount > 0) {
             return
                 getOraclePriceX18(healthGroup.spotId).mul(

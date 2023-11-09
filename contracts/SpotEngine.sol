@@ -89,6 +89,9 @@ contract SpotEngine is SpotEngineLP, Version {
         } else if (productId == 31) {
             // USDT
             return 1e18;
+        } else if (productId == 41) {
+            // VRTX
+            return 1e18;
         }
         revert(ERR_INVALID_PRODUCT);
     }
@@ -138,8 +141,8 @@ contract SpotEngine is SpotEngineLP, Version {
         IClearinghouseState.RiskStore memory riskStore = tx.riskStore;
 
         require(
-            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial >
+            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial >=
                 riskStore.shortWeightMaintenance &&
                 (configs[tx.productId].token ==
                     address(uint160(tx.productId)) ||

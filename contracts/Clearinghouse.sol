@@ -130,6 +130,14 @@ contract Clearinghouse is
                     ISpotEngine.Balance memory balance
                 ) = spotEngine.getBalances(group.spotId, subaccount);
 
+                if (group.spotId == VRTX_PRODUCT_ID) {
+                    // health will be negative as long as VRTX balance is negative,
+                    // so that nobody can borrow it.
+                    if (balance.amount < 0) {
+                        return -ONE;
+                    }
+                }
+
                 if (lpBalance.amount != 0) {
                     ISpotEngine.LpState memory lpState = spotEngine.getLpState(
                         group.spotId
