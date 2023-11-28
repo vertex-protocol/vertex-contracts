@@ -92,4 +92,8 @@ interface IClearinghouse is
     function getInsurance() external view returns (int128);
 
     function getAllBooks() external view returns (address[] memory);
+
+    function upgradeClearinghouseLiq(address _clearinghouseLiq) external;
+
+    function getClearinghouseLiq() external view returns (address);
 }

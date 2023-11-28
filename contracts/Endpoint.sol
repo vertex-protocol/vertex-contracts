@@ -772,6 +772,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         return nonces[sender];
     }
 
+    function getLinkedSigner(bytes32 subaccount)
+        external
+        view
+        returns (address)
+    {
+        return linkedSigners[subaccount];
+    }
+
     function registerTransferableWallet(address wallet, bool transferable)
         external
         onlyOwner

@@ -18,6 +18,10 @@ import "./ClearinghouseRisk.sol";
 import "./ClearinghouseStorage.sol";
 import "./Version.sol";
 
+interface IProxyManager {
+    function getProxyManagerHelper() external view returns (address);
+}
+
 contract Clearinghouse is
     ClearinghouseRisk,
     ClearinghouseStorage,
@@ -723,11 +727,25 @@ contract Clearinghouse is
         require(success, string(result));
     }
 
-    function upgradeClearinghouseLiq(address _clearinghouseLiq)
-        external
-        onlyOwner
-    {
+    struct AddressSlot {
+        address value;
+    }
+
+    function upgradeClearinghouseLiq(address _clearinghouseLiq) external {
+        AddressSlot storage proxyAdmin;
+        assembly {
+            proxyAdmin.slot := 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103
+        }
+        require(
+            msg.sender ==
+                IProxyManager(proxyAdmin.value).getProxyManagerHelper(),
+            ERR_UNAUTHORIZED
+        );
         clearinghouseLiq = _clearinghouseLiq;
+    }
+
+    function getClearinghouseLiq() external view returns (address) {
+        return clearinghouseLiq;
     }
 
     function getAllBooks() external view returns (address[] memory) {
