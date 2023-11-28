@@ -130,10 +130,6 @@ contract OffchainBook is
         return ((expiration >> 61) & 1) == 1;
     }
 
-    function _isTakerFirst(bytes32 orderDigest) internal view returns (bool) {
-        return filledAmounts[orderDigest] == 0;
-    }
-
     function _validateOrder(
         Market memory _market,
         IEndpoint.SignedOrder memory signedOrder,
@@ -175,35 +171,68 @@ contract OffchainBook is
     function _feeAmount(
         bytes32 subaccount,
         Market memory _market,
-        int128 amount,
-        bool taker,
-        // is this the first instance of this taker order matching
-        bool takerFirst
+        int128 matchBase,
+        int128 matchQuote,
+        int128 alreadyMatched,
+        int128 orderPriceX18,
+        bool taker
     ) internal view returns (int128, int128) {
-        uint32 productId = _market.productId;
-        int128 keepRateX18 = ONE -
-            fees.getFeeFractionX18(subaccount, productId, taker);
-        int128 newAmount = (amount > 0)
-            ? amount.mul(keepRateX18)
-            : amount.div(keepRateX18);
-        int128 feeAmount = amount - newAmount;
-        _market.collectedFees += feeAmount;
-        if (takerFirst && taker) {
-            newAmount -= TAKER_SEQUENCER_FEE;
-            _market.sequencerFees += TAKER_SEQUENCER_FEE;
+        int128 meteredQuote = 0;
+        if (taker) {
+            int128 _minSize = minSize;
+
+            // flat minimum fee
+            if (alreadyMatched == 0) {
+                meteredQuote += _minSize.mul(orderPriceX18);
+                if (matchQuote < 0) {
+                    meteredQuote = -meteredQuote;
+                }
+            }
+
+            // exclude the portion on [0, self.min_size) for match_quote and
+            // add to metered_quote
+            int128 matchBaseAbs = matchBase.abs();
+            // fee is only applied on [minSize, amount)
+            int128 feeApplied = MathHelper.abs(alreadyMatched + matchBase) -
+                _minSize;
+            feeApplied = MathHelper.min(feeApplied, matchBaseAbs);
+            if (feeApplied > 0) {
+                meteredQuote += matchQuote.mulDiv(feeApplied, matchBaseAbs);
+            }
+        } else {
+            // for maker rebates things stay the same
+            meteredQuote += matchQuote;
         }
-        return (feeAmount, newAmount);
+
+        int128 keepRateX18 = ONE -
+            fees.getFeeFractionX18(subaccount, _market.productId, taker);
+        int128 newMeteredQuote = (meteredQuote > 0)
+            ? meteredQuote.mul(keepRateX18)
+            : meteredQuote.div(keepRateX18);
+        int128 feeAmount = meteredQuote - newMeteredQuote;
+        _market.collectedFees += feeAmount;
+        return (feeAmount, matchQuote - feeAmount);
     }
 
     function feeAmount(
         bytes32 subaccount,
         Market memory _market,
-        int128 amount,
-        bool taker,
-        // is this the first instance of this taker order matching
-        bool takerFirst
+        int128 matchBase,
+        int128 matchQuote,
+        int128 alreadyMatched,
+        int128 orderPriceX18,
+        bool taker
     ) internal virtual returns (int128, int128) {
-        return _feeAmount(subaccount, _market, amount, taker, takerFirst);
+        return
+            _feeAmount(
+                subaccount,
+                _market,
+                matchBase,
+                matchQuote,
+                alreadyMatched,
+                orderPriceX18,
+                taker
+            );
     }
 
     struct OrdersInfo {
@@ -280,11 +309,14 @@ contract OffchainBook is
 
         // apply the maker fee
         int128 makerFee;
+
         (makerFee, makerQuoteDelta) = feeAmount(
             maker.sender,
             _market,
+            -takerAmountDelta,
             makerQuoteDelta,
-            false,
+            0, // alreadyMatched doesn't matter for a maker order
+            0, // price doesn't matter for a maker order
             false
         );
 
@@ -342,8 +374,6 @@ contract OffchainBook is
             ERR_INVALID_TAKER
         );
 
-        bool isTakerFirst = _isTakerFirst(takerDigest);
-
         (int128 takerAmountDelta, int128 takerQuoteDelta) = _matchOrderAMM(
             _market,
             txn.baseDelta,
@@ -353,12 +383,15 @@ contract OffchainBook is
 
         // apply the taker fee
         int128 takerFee;
+
         (takerFee, takerQuoteDelta) = feeAmount(
             taker.order.sender,
             _market,
+            takerAmountDelta,
             takerQuoteDelta,
-            true,
-            isTakerFirst
+            takerAmount - taker.order.amount - takerAmountDelta,
+            -takerQuoteDelta.div(takerAmountDelta),
+            true
         );
 
         IProductEngine.ProductDelta[]
@@ -457,8 +490,6 @@ contract OffchainBook is
             );
         }
 
-        bool isTakerFirst = _isTakerFirst(ordersInfo.takerDigest);
-
         (int128 takerAmountDelta, int128 takerQuoteDelta) = _matchOrderOrder(
             _market,
             taker.order,
@@ -471,9 +502,11 @@ contract OffchainBook is
         (takerFee, takerQuoteDelta) = feeAmount(
             taker.order.sender,
             _market,
+            takerAmountDelta,
             takerQuoteDelta,
-            true,
-            isTakerFirst
+            takerAmount - taker.order.amount - takerAmountDelta,
+            maker.order.priceX18,
+            true
         );
 
         {
@@ -543,12 +576,21 @@ contract OffchainBook is
         takerQuoteDelta = -takerQuoteDelta;
 
         int128 takerFee;
+        //             taker.order.sender,
+        //            _market,
+        //            takerAmountDelta,
+        //            takerQuoteDelta,
+        //            takerAmount,
+        //            taker.order.priceX18,
+        //            true
         (takerFee, takerQuoteDelta) = feeAmount(
             txn.sender,
             _market,
+            takerAmountDelta,
             takerQuoteDelta,
-            true,
-            false
+            (takerAmountDelta > 0) ? minSize : -minSize, // just charge the protocol fee without any flat stuff
+            0,
+            true
         );
 
         {
