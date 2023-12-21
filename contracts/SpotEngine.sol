@@ -66,32 +66,15 @@ contract SpotEngine is SpotEngineLP, Version {
         } else if (productId == 5) {
             // ARB
             return 1e18;
-        } else if (
-            productId == 7 ||
-            productId == 9 ||
-            productId == 11 ||
-            productId == 13 ||
-            productId == 15 ||
-            productId == 17 ||
-            productId == 19 ||
-            productId == 21 ||
-            productId == 23 ||
-            productId == 25 ||
-            productId == 27 ||
-            productId == 29 ||
-            productId == 33 ||
-            productId == 35 ||
-            productId == 37 ||
-            productId == 39
-        ) {
-            // placeholders
-            return 0;
         } else if (productId == 31) {
             // USDT
             return 1e18;
         } else if (productId == 41) {
             // VRTX
             return 1e18;
+        } else if (productId >= 7 && productId <= 61 && productId % 2 == 1) {
+            // placeholders
+            return 0;
         }
         revert(ERR_INVALID_PRODUCT);
     }
