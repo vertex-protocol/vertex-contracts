@@ -101,4 +101,6 @@ interface ISpotEngine is IProductEngine {
     ) external view;
 
     function socializeSubaccount(bytes32 subaccount) external;
+
+    function assertUtilization(uint32 productId) external view;
 }

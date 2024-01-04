@@ -2,5 +2,5 @@
 pragma solidity ^0.8.0;
 
 interface IVersion {
-    function getVersion() external returns (uint64);
+    function getVersion() external view returns (uint64);
 }

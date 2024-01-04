@@ -72,7 +72,7 @@ contract SpotEngine is SpotEngineLP, Version {
         } else if (productId == 41) {
             // VRTX
             return 1e18;
-        } else if (productId >= 7 && productId <= 61 && productId % 2 == 1) {
+        } else if (productId % 2 == 1) {
             // placeholders
             return 0;
         }
@@ -172,6 +172,24 @@ contract SpotEngine is SpotEngineLP, Version {
 
             _balanceUpdate(productId, subaccount);
         }
+    }
+
+    // only check on withdraw -- ensure that users can't withdraw
+    // funds that are in the Vertex contract but not officially
+    // 'deposited' into the Vertex system and counted in balances
+    // (i.e. if a user transfers tokens to the clearinghouse
+    // without going through the standard deposit)
+    function assertUtilization(uint32 productId) external view {
+        State memory _state = states[productId];
+        require(
+            _state.totalDepositsNormalized.mul(
+                _state.cumulativeDepositsMultiplierX18
+            ) >=
+                _state.totalBorrowsNormalized.mul(
+                    _state.cumulativeBorrowsMultiplierX18
+                ),
+            ERR_MAX_UTILIZATION
+        );
     }
 
     function socializeSubaccount(bytes32 subaccount) external {
