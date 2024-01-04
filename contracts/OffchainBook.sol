@@ -156,13 +156,20 @@ contract OffchainBook is
 
         return
             (order.priceX18 > 0) &&
-            (order.priceX18 % _market.priceIncrementX18 == 0) &&
-            _checkSignature(
-                order.sender,
-                orderDigest,
-                linkedSigner,
-                signedOrder.signature
-            ) &&
+            /// for now signatures for orders are not verified on chain to save calldata costs;
+            /// instead nulls are passed to on chain submission. anybody can query
+            /// and verify sequencer honesty and signatures independently
+            /// off-chain using the archive service signatures endpoint. they can
+            /// pass in order digests and get the associated signatures for those orders
+            /// and verify that the signatures are valid for those digests.
+            /// with efforts to decentralize the sequencer, sequencer honesty will
+            /// no longer be an issue since it will be moderated by many nodes
+            //            _checkSignature(
+            //                order.sender,
+            //                orderDigest,
+            //                linkedSigner,
+            //                signedOrder.signature
+            //            ) &&
             // valid amount
             (order.amount != 0) &&
             !_expired(order.expiration);
