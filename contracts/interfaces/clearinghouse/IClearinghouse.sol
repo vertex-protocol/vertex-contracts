@@ -58,12 +58,6 @@ interface IClearinghouse is
     /// @notice Retrieve quote ERC20 address
     function getQuote() external view returns (address);
 
-    /// @notice Returns all supported engine types for the clearinghouse
-    function getSupportedEngines()
-        external
-        view
-        returns (IProductEngine.EngineType[] memory);
-
     /// @notice Returns the registered engine address by type
     function getEngineByType(IProductEngine.EngineType engineType)
         external
