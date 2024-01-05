@@ -123,21 +123,24 @@ contract SpotEngine is SpotEngineLP, Version {
         UpdateProductTx memory tx = abi.decode(tx, (UpdateProductTx));
         IClearinghouseState.RiskStore memory riskStore = tx.riskStore;
 
-        require(
-            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial >=
-                riskStore.shortWeightMaintenance &&
-                (configs[tx.productId].token ==
-                    address(uint160(tx.productId)) ||
-                    configs[tx.productId].token == tx.config.token),
-            ERR_BAD_PRODUCT_CONFIG
-        );
-        markets[tx.productId].modifyConfig(
-            tx.sizeIncrement,
-            tx.priceIncrementX18,
-            tx.minSize,
-            tx.lpSpreadX18
-        );
+        if (tx.productId != QUOTE_PRODUCT_ID) {
+            require(
+                riskStore.longWeightInitial <=
+                    riskStore.longWeightMaintenance &&
+                    riskStore.shortWeightInitial >=
+                    riskStore.shortWeightMaintenance &&
+                    (configs[tx.productId].token ==
+                        address(uint160(tx.productId)) ||
+                        configs[tx.productId].token == tx.config.token),
+                ERR_BAD_PRODUCT_CONFIG
+            );
+            markets[tx.productId].modifyConfig(
+                tx.sizeIncrement,
+                tx.priceIncrementX18,
+                tx.minSize,
+                tx.lpSpreadX18
+            );
+        }
 
         configs[tx.productId] = tx.config;
         _clearinghouse.modifyProductConfig(tx.productId, riskStore);

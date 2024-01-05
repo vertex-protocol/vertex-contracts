@@ -10,8 +10,6 @@ import "./interfaces/IOffchainBook.sol";
 import "./EndpointGated.sol";
 import "./common/Errors.sol";
 import "./libraries/ERC20Helper.sol";
-import "./interfaces/IEndpoint.sol";
-import "./libraries/Logger.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 import "./interfaces/IERC20Base.sol";
@@ -106,9 +104,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             txUpTo: 0
         });
         times = Times({perpTime: _time, spotTime: _time});
-        for (uint32 i = 0; i < _prices.length; i += 2) {
-            pricesX18[i / 2].spotPriceX18 = _prices[i];
-            pricesX18[i / 2].perpPriceX18 = _prices[i + 1];
+        for (uint256 i = 0; i < _prices.length; i += 2) {
+            uint32 _id = uint32(i) / 2;
+            pricesX18[_id].spotPriceX18 = _prices[i];
+            pricesX18[_id].perpPriceX18 = _prices[i + 1];
         }
     }
 
@@ -190,13 +189,35 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         token.safeTransferFrom(from, address(this), amount);
     }
 
+    function safeTransferTo(
+        IERC20Base token,
+        address to,
+        uint256 amount
+    ) internal virtual {
+        token.safeTransfer(to, amount);
+    }
+
+    function migrate() external onlyOwner {
+        uint32[] memory spotIds = spotEngine.getProductIds();
+        // transfer everything to the clearinghouse
+        for (uint256 i = 0; i < spotIds.length; i++) {
+            IERC20Base token = IERC20Base(
+                spotEngine.getConfig(spotIds[i]).token
+            );
+            uint256 balance = token.balanceOf(address(this));
+            if (balance > 0) {
+                safeTransferTo(token, address(clearinghouse), balance);
+            }
+        }
+    }
+
     function handleDepositTransfer(
         IERC20Base token,
         address from,
         uint256 amount
     ) internal {
-        increaseAllowance(token, address(clearinghouse), amount);
         safeTransferFrom(token, from, amount);
+        safeTransferTo(token, address(clearinghouse), amount);
     }
 
     function validateSender(bytes32 txSender, address sender) internal view {
@@ -265,7 +286,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         IERC20Base token = IERC20Base(spotEngine.getConfig(productId).token);
         require(address(token) != address(0));
         handleDepositTransfer(token, msg.sender, uint256(amount));
-
         // copy from submitSlowModeTransaction
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
 
@@ -373,17 +393,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         }
     }
 
-    function executeSlowModeTransactions(uint32 count) external {
+    function executeSlowModeTransaction() external {
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
-        require(
-            count <= _slowModeConfig.txCount - _slowModeConfig.txUpTo,
-            ERR_INVALID_COUNT
-        );
-
-        while (count > 0) {
-            _executeSlowModeTransaction(_slowModeConfig, false);
-            --count;
-        }
+        _executeSlowModeTransaction(_slowModeConfig, false);
         slowModeConfig = _slowModeConfig;
     }
 
@@ -667,19 +679,17 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     function submitTransactions(bytes[] calldata transactions) public {
         requireSequencer();
-        for (uint128 i = 0; i < transactions.length; i++) {
+        for (uint256 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];
             processTransaction(transaction);
         }
         nSubmissions += uint64(transactions.length);
-        emit SubmitTransactions();
     }
 
     function submitTransactionsChecked(
         uint64 idx,
         bytes[] calldata transactions
     ) external {
-        requireSequencer();
         require(idx == nSubmissions, ERR_INVALID_SUBMISSION_INDEX);
         // TODO: if one of these transactions fails this means the sequencer is in an error state
         // we should probably record this, and engage some sort of recovery mode
@@ -694,7 +704,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint256 gasUsed = gasleft();
         requireSequencer();
         require(idx == nSubmissions, ERR_INVALID_SUBMISSION_INDEX);
-        for (uint128 i = 0; i < transactions.length; i++) {
+        for (uint256 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];
             processTransaction(transaction);
             if (gasUsed - gasleft() > gasLimit) {
@@ -724,10 +734,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         return subaccountIds[subaccount];
     }
 
-    // this is enforced anywhere in addProduct, we generate productId in
-    // the following way.
     function _getHealthGroup(uint32 productId) internal pure returns (uint32) {
-        require(productId != 0, ERR_GETTING_ZERO_HEALTH_GROUP);
         return (productId - 1) / 2;
     }
 
