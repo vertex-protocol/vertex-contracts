@@ -118,3 +118,8 @@ string constant ERR_WALLET_SANCTIONED = "WS";
 
 string constant ERR_SLOW_MODE_WRONG_SENDER = "SMWS";
 string constant ERR_WRONG_NONCE = "WN";
+
+// initially wanted to call this
+// ERR_FULL_UTILIZATION but the shortened
+// error string may make people mad on the frontend
+string constant ERR_MAX_UTILIZATION = "MU";

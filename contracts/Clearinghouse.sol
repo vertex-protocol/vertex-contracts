@@ -474,6 +474,7 @@ contract Clearinghouse is
         });
 
         spotEngine.applyDeltas(deltas);
+        spotEngine.assertUtilization(txn.productId);
         require(!_isUnderInitial(txn.sender), ERR_SUBACCT_HEALTH);
 
         emit ModifyCollateral(amountRealized, txn.sender, txn.productId);
