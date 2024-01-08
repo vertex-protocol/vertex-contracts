@@ -8,6 +8,7 @@ import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
+import "./interfaces/IERC20Base.sol";
 import "./BaseEngine.sol";
 import "./SpotEngineState.sol";
 import "./SpotEngineLP.sol";
@@ -129,8 +130,9 @@ contract SpotEngine is SpotEngineLP, Version {
                     riskStore.longWeightMaintenance &&
                     riskStore.shortWeightInitial >=
                     riskStore.shortWeightMaintenance &&
-                    (configs[tx.productId].token ==
-                        address(uint160(tx.productId)) ||
+                    // we messed up placeholder's token address so we have to find
+                    // a new way to check whether a product is a placeholder.
+                    (states[tx.productId].totalDepositsNormalized == 0 ||
                         configs[tx.productId].token == tx.config.token),
                 ERR_BAD_PRODUCT_CONFIG
             );
@@ -261,5 +263,13 @@ contract SpotEngine is SpotEngineLP, Version {
                 ERR_DSYNC
             );
         }
+    }
+
+    function isPlaceholder(uint32 productId) external view returns (bool) {
+        return states[productId].totalDepositsNormalized == 0;
+    }
+
+    function getToken(uint32 productId) external view returns (address) {
+        return address(configs[productId].token);
     }
 }

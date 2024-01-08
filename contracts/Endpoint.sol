@@ -22,7 +22,7 @@ interface ISanctionsList {
 contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
     using ERC20Helper for IERC20Base;
 
-    IERC20Base private quote;
+    IERC20Base private quote; // deprecated
     IClearinghouse public clearinghouse;
     ISpotEngine private spotEngine;
     IPerpEngine private perpEngine;
@@ -201,8 +201,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint32[] memory spotIds = spotEngine.getProductIds();
         // transfer everything to the clearinghouse
         for (uint256 i = 0; i < spotIds.length; i++) {
+            uint32 productId = spotIds[i];
+            if (spotEngine.isPlaceholder(productId)) {
+                continue;
+            }
             IERC20Base token = IERC20Base(
-                spotEngine.getConfig(spotIds[i]).token
+                spotEngine.getToken(productId)
             );
             uint256 balance = token.balanceOf(address(this));
             if (balance > 0) {
@@ -283,7 +287,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             sender == msg.sender ? referralCode : DEFAULT_REFERRAL_CODE
         );
 
-        IERC20Base token = IERC20Base(spotEngine.getConfig(productId).token);
+        IERC20Base token = IERC20Base(spotEngine.getToken(productId));
         require(address(token) != address(0));
         handleDepositTransfer(token, msg.sender, uint256(amount));
         // copy from submitSlowModeTransaction
@@ -328,7 +332,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 transaction[1:],
                 (DepositInsurance)
             );
-            IERC20Base token = IERC20Base(clearinghouse.getQuote());
+            IERC20Base token = _getQuote();
             require(address(token) != address(0));
             handleDepositTransfer(token, sender, uint256(txn.amount));
         } else if (txType == TransactionType.UpdateProduct) {
@@ -336,7 +340,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         } else if (txType == TransactionType.BurnLpAndTransfer) {
             require(transferableWallets[sender], ERR_WALLET_NOT_TRANSFERABLE);
         } else {
-            safeTransferFrom(quote, sender, uint256(int256(SLOW_MODE_FEE)));
+            IERC20Base token = _getQuote();
+            safeTransferFrom(token, sender, uint256(int256(SLOW_MODE_FEE)));
             slowModeFees += SLOW_MODE_FEE;
         }
 
@@ -736,6 +741,13 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     function _getHealthGroup(uint32 productId) internal pure returns (uint32) {
         return (productId - 1) / 2;
+    }
+
+    function _getQuote() internal view returns (IERC20Base) {
+        IERC20Base token = IERC20Base(
+            spotEngine.getToken(QUOTE_PRODUCT_ID)
+        );
+        return token;
     }
 
     function getPriceX18(uint32 productId)
