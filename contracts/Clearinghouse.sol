@@ -66,14 +66,6 @@ contract Clearinghouse is
         return quote;
     }
 
-    function getSupportedEngines()
-        external
-        view
-        returns (IProductEngine.EngineType[] memory)
-    {
-        return supportedEngines;
-    }
-
     function getEngineByType(IProductEngine.EngineType engineType)
         external
         view
@@ -374,12 +366,17 @@ contract Clearinghouse is
         return productId;
     }
 
-    function handleDepositTransfer(
-        IERC20Base token,
-        address from,
-        uint128 amount
-    ) internal virtual {
-        token.safeTransferFrom(from, address(this), uint256(amount));
+    function _tokenAddress(uint32 productId) internal view returns (address) {
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        return spotEngine.getConfig(productId).token;
+    }
+
+    function _decimals(uint32 productId) internal virtual returns (uint8) {
+        IERC20Base token = IERC20Base(_tokenAddress(productId));
+        require(address(token) != address(0));
+        return token.decimals();
     }
 
     function depositCollateral(IEndpoint.DepositCollateral calldata txn)
@@ -391,15 +388,10 @@ contract Clearinghouse is
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
-        IERC20Base token = IERC20Base(
-            spotEngine.getConfig(txn.productId).token
-        );
-        require(address(token) != address(0));
-        // transfer from the endpoint
-        handleDepositTransfer(token, msg.sender, uint128(txn.amount));
+        uint8 decimals = _decimals(txn.productId);
 
-        require(token.decimals() <= MAX_DECIMALS);
-        int256 multiplier = int256(10**(MAX_DECIMALS - token.decimals()));
+        require(decimals <= MAX_DECIMALS);
+        int256 multiplier = int256(10**(MAX_DECIMALS - decimals));
         int128 amountRealized = int128(txn.amount) * int128(multiplier);
 
         IProductEngine.ProductDelta[]
@@ -424,13 +416,12 @@ contract Clearinghouse is
         onlyEndpoint
     {
         require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
-        IERC20Base token = IERC20Base(quote);
-        int256 multiplier = int256(10**(MAX_DECIMALS - token.decimals()));
+        int256 multiplier = int256(
+            10**(MAX_DECIMALS - _decimals(QUOTE_PRODUCT_ID))
+        );
         int128 amount = int128(txn.amount) * int128(multiplier);
 
         insurance += amount;
-        // facilitate transfer
-        handleDepositTransfer(token, msg.sender, uint128(txn.amount));
     }
 
     function handleWithdrawTransfer(
@@ -439,6 +430,10 @@ contract Clearinghouse is
         uint128 amount
     ) internal virtual {
         token.safeTransfer(to, uint256(amount));
+    }
+
+    function _balanceOf(address token) internal view virtual returns (uint128) {
+        return uint128(IERC20Base(token).balanceOf(address(this)));
     }
 
     function withdrawCollateral(IEndpoint.WithdrawCollateral calldata txn)
@@ -454,13 +449,36 @@ contract Clearinghouse is
             spotEngine.getConfig(txn.productId).token
         );
         require(address(token) != address(0));
-        handleWithdrawTransfer(
-            token,
-            address(uint160(bytes20(txn.sender))),
-            txn.amount
-        );
 
-        int256 multiplier = int256(10**(MAX_DECIMALS - token.decimals()));
+        uint128 tokenTransferAmount = txn.amount;
+        if (txn.productId == QUOTE_PRODUCT_ID && address(token) != quote) {
+            uint128 transferNow = _balanceOf(quote);
+            if (transferNow == 0) {
+                quote = address(token);
+            } else {
+                if (transferNow > txn.amount) {
+                    transferNow = txn.amount;
+                }
+                tokenTransferAmount -= transferNow;
+                handleWithdrawTransfer(
+                    IERC20Base(quote),
+                    address(uint160(bytes20(txn.sender))),
+                    transferNow
+                );
+            }
+        }
+
+        if (tokenTransferAmount != 0) {
+            handleWithdrawTransfer(
+                token,
+                address(uint160(bytes20(txn.sender))),
+                tokenTransferAmount
+            );
+        }
+
+        int256 multiplier = int256(
+            10**(MAX_DECIMALS - _decimals(txn.productId))
+        );
         int128 amountRealized = -int128(txn.amount) * int128(multiplier);
 
         IProductEngine.ProductDelta[]
@@ -689,14 +707,9 @@ contract Clearinghouse is
         }
     }
 
-    function _isUnderInitial(bytes32 subaccount) public view returns (bool) {
+    function _isUnderInitial(bytes32 subaccount) internal view returns (bool) {
         // Weighted initial health with limit orders < 0
         return getHealth(subaccount, IProductEngine.HealthType.INITIAL) < 0;
-    }
-
-    function _isAboveInitial(bytes32 subaccount) public view returns (bool) {
-        // Weighted initial health with limit orders < 0
-        return getHealth(subaccount, IProductEngine.HealthType.INITIAL) > 0;
     }
 
     function _isUnderMaintenance(bytes32 subaccount)

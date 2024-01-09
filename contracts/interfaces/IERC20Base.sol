@@ -35,4 +35,6 @@ interface IERC20Base {
     function decreaseAllowance(address spender, uint256 subtractedValue)
         external
         returns (bool);
+
+    function balanceOf(address account) external view returns (uint256);
 }

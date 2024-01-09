@@ -8,6 +8,7 @@ import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
+import "./interfaces/IERC20Base.sol";
 import "./BaseEngine.sol";
 import "./SpotEngineState.sol";
 import "./SpotEngineLP.sol";
@@ -123,21 +124,25 @@ contract SpotEngine is SpotEngineLP, Version {
         UpdateProductTx memory tx = abi.decode(tx, (UpdateProductTx));
         IClearinghouseState.RiskStore memory riskStore = tx.riskStore;
 
-        require(
-            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial >=
-                riskStore.shortWeightMaintenance &&
-                (configs[tx.productId].token ==
-                    address(uint160(tx.productId)) ||
-                    configs[tx.productId].token == tx.config.token),
-            ERR_BAD_PRODUCT_CONFIG
-        );
-        markets[tx.productId].modifyConfig(
-            tx.sizeIncrement,
-            tx.priceIncrementX18,
-            tx.minSize,
-            tx.lpSpreadX18
-        );
+        if (tx.productId != QUOTE_PRODUCT_ID) {
+            require(
+                riskStore.longWeightInitial <=
+                    riskStore.longWeightMaintenance &&
+                    riskStore.shortWeightInitial >=
+                    riskStore.shortWeightMaintenance &&
+                    // we messed up placeholder's token address so we have to find
+                    // a new way to check whether a product is a placeholder.
+                    (states[tx.productId].totalDepositsNormalized == 0 ||
+                        configs[tx.productId].token == tx.config.token),
+                ERR_BAD_PRODUCT_CONFIG
+            );
+            markets[tx.productId].modifyConfig(
+                tx.sizeIncrement,
+                tx.priceIncrementX18,
+                tx.minSize,
+                tx.lpSpreadX18
+            );
+        }
 
         configs[tx.productId] = tx.config;
         _clearinghouse.modifyProductConfig(tx.productId, riskStore);
@@ -258,5 +263,13 @@ contract SpotEngine is SpotEngineLP, Version {
                 ERR_DSYNC
             );
         }
+    }
+
+    function isPlaceholder(uint32 productId) external view returns (bool) {
+        return states[productId].totalDepositsNormalized == 0;
+    }
+
+    function getToken(uint32 productId) external view returns (address) {
+        return address(configs[productId].token);
     }
 }
