@@ -339,6 +339,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             require(sender == owner());
         } else if (txType == TransactionType.BurnLpAndTransfer) {
             require(transferableWallets[sender], ERR_WALLET_NOT_TRANSFERABLE);
+            BurnLpAndTransfer memory txn = abi.decode(
+                transaction[1:],
+                (BurnLpAndTransfer)
+            );
+            setReferralCode(
+                address(uint160(bytes20(txn.recipient))),
+                DEFAULT_REFERRAL_CODE
+            );
         } else {
             IERC20Base token = _getQuote();
             safeTransferFrom(token, sender, uint256(int256(SLOW_MODE_FEE)));
