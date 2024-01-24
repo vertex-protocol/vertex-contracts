@@ -64,16 +64,16 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
     // address -> whether can call `BurnLpAndTransfer`.
     mapping(address => bool) transferableWallets;
 
-    string constant LIQUIDATE_SUBACCOUNT_SIGNATURE =
-        "LiquidateSubaccount(bytes32 sender,bytes32 liquidatee,uint8 mode,uint32 healthGroup,int128 amount,uint64 nonce)";
-    string constant WITHDRAW_COLLATERAL_SIGNATURE =
-        "WithdrawCollateral(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
-    string constant MINT_LP_SIGNATURE =
-        "MintLp(bytes32 sender,uint32 productId,uint128 amountBase,uint128 quoteAmountLow,uint128 quoteAmountHigh,uint64 nonce)";
-    string constant BURN_LP_SIGNATURE =
-        "BurnLp(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
-    string constant LINK_SIGNER_SIGNATURE =
-        "LinkSigner(bytes32 sender,bytes32 signer,uint64 nonce)";
+    // "LiquidateSubaccount(bytes32 sender,bytes32 liquidatee,uint8 mode,uint32 healthGroup,int128 amount,uint64 nonce)"
+    bytes32 internal constant LIQUIDATE_SUBACCOUNT_TYPEHASH = 0x8d632e39148c057e580fd751f6a5b4459bd443e65d0ba12d238d6c5dcbd2cdaa;
+    // "WithdrawCollateral(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)"
+    bytes32 internal constant WITHDRAW_COLLATERAL_TYPEHASH = 0xf12a9ea879fe3d5db78022ca1b7c77141dc8a34242818295260edf226e7fcd89;
+    // "MintLp(bytes32 sender,uint32 productId,uint128 amountBase,uint128 quoteAmountLow,uint128 quoteAmountHigh,uint64 nonce)"
+    bytes32 internal constant MINT_LP_TYPEHASH = 0xa32dede6c4a5df100c992adb1fe69dd8befde256095fe299e1896fb90f18ac65;
+    // "BurnLp(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)"
+    bytes32 internal constant BURN_LP_TYPEHASH = 0x6187d793c1f2151da9bd784d12f4da1987fd3c0ca03814799310087110853aef;
+    // "LinkSigner(bytes32 sender,bytes32 signer,uint64 nonce)"
+    bytes32 internal constant LINK_SIGNER_TYPEHASH = 0x57dc84ca7bc2f1388f0707b982b939de645c07cb9a9cb730eeb1e48eb6daf147;
 
     function initialize(
         address _sanctions,
@@ -499,7 +499,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
-                        keccak256(bytes(LIQUIDATE_SUBACCOUNT_SIGNATURE)),
+                        LIQUIDATE_SUBACCOUNT_TYPEHASH,
                         signedTx.tx.sender,
                         signedTx.tx.liquidatee,
                         signedTx.tx.mode,
@@ -522,7 +522,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
-                        keccak256(bytes(WITHDRAW_COLLATERAL_SIGNATURE)),
+                        WITHDRAW_COLLATERAL_TYPEHASH,
                         signedTx.tx.sender,
                         signedTx.tx.productId,
                         signedTx.tx.amount,
@@ -596,7 +596,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
-                        keccak256(bytes(MINT_LP_SIGNATURE)),
+                        MINT_LP_TYPEHASH,
                         signedTx.tx.sender,
                         signedTx.tx.productId,
                         signedTx.tx.amountBase,
@@ -618,7 +618,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
-                        keccak256(bytes(BURN_LP_SIGNATURE)),
+                        BURN_LP_TYPEHASH,
                         signedTx.tx.sender,
                         signedTx.tx.productId,
                         signedTx.tx.amount,
@@ -664,7 +664,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
-                        keccak256(bytes(LINK_SIGNER_SIGNATURE)),
+                        LINK_SIGNER_TYPEHASH,
                         signedTx.tx.sender,
                         signedTx.tx.signer,
                         signedTx.tx.nonce
