@@ -30,7 +30,8 @@ interface IEndpoint is IVersion {
         UpdateProduct,
         LinkSigner,
         UpdateFeeRates,
-        BurnLpAndTransfer
+        BurnLpAndTransfer,
+        MatchOrdersRFQ
     }
 
     struct UpdateProduct {
