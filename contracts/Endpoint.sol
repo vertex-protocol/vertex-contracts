@@ -205,9 +205,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             if (spotEngine.isPlaceholder(productId)) {
                 continue;
             }
-            IERC20Base token = IERC20Base(
-                spotEngine.getToken(productId)
-            );
+            IERC20Base token = IERC20Base(spotEngine.getToken(productId));
             uint256 balance = token.balanceOf(address(this));
             if (balance > 0) {
                 safeTransferTo(token, address(clearinghouse), balance);
@@ -563,7 +561,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         } else if (txType == TransactionType.SettlePnl) {
             SettlePnl memory txn = abi.decode(transaction[1:], (SettlePnl));
             clearinghouse.settlePnl(txn);
-        } else if (txType == TransactionType.MatchOrders) {
+        } else if (
+            txType == TransactionType.MatchOrders ||
+            txType == TransactionType.MatchOrdersRFQ
+        ) {
             MatchOrders memory txn = abi.decode(transaction[1:], (MatchOrders));
             requireSubaccount(txn.taker.order.sender);
             requireSubaccount(txn.maker.order.sender);
@@ -752,9 +753,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
     }
 
     function _getQuote() internal view returns (IERC20Base) {
-        IERC20Base token = IERC20Base(
-            spotEngine.getToken(QUOTE_PRODUCT_ID)
-        );
+        IERC20Base token = IERC20Base(spotEngine.getToken(QUOTE_PRODUCT_ID));
         return token;
     }
 

@@ -94,7 +94,7 @@ interface ISpotEngine is IProductEngine {
     function getWithdrawFee(uint32 productId) external view returns (int128);
 
     function isPlaceholder(uint32 productId) external view returns (bool);
-    
+
     function getToken(uint32 productId) external view returns (address);
 
     function updateStates(uint128 dt) external;
