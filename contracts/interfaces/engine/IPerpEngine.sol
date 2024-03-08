@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./IProductEngine.sol";
-import "../clearinghouse/IClearinghouseState.sol";
+import "../../libraries/RiskHelper.sol";
 
 interface IPerpEngine is IProductEngine {
     struct State {
@@ -37,10 +37,9 @@ interface IPerpEngine is IProductEngine {
     struct UpdateProductTx {
         uint32 productId;
         int128 sizeIncrement;
-        int128 priceIncrementX18;
         int128 minSize;
         int128 lpSpreadX18;
-        IClearinghouseState.RiskStore riskStore;
+        RiskHelper.RiskStore riskStore;
     }
 
     function getStateAndBalance(uint32 productId, bytes32 subaccount)
@@ -53,11 +52,6 @@ interface IPerpEngine is IProductEngine {
         view
         returns (Balance memory);
 
-    function hasBalance(uint32 productId, bytes32 subaccount)
-        external
-        view
-        returns (bool);
-
     function getStatesAndBalances(uint32 productId, bytes32 subaccount)
         external
         view
@@ -67,16 +61,6 @@ interface IPerpEngine is IProductEngine {
             State memory,
             Balance memory
         );
-
-    function getBalances(uint32 productId, bytes32 subaccount)
-        external
-        view
-        returns (LpBalance memory, Balance memory);
-
-    function getLpState(uint32 productId)
-        external
-        view
-        returns (LpState memory);
 
     /// @dev Returns amount settled and emits SettlePnl events for each product
     function settlePnl(bytes32 subaccount, uint256 productIds)
@@ -93,6 +77,13 @@ interface IPerpEngine is IProductEngine {
             State memory state,
             Balance memory balance
         );
+
+    function updateBalance(
+        uint32 productId,
+        bytes32 subaccount,
+        int128 amountDelta,
+        int128 vQuoteDelta
+    ) external;
 
     function updateStates(uint128 dt, int128[] calldata avgPriceDiffs) external;
 

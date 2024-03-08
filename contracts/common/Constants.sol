@@ -6,6 +6,7 @@ uint32 constant QUOTE_PRODUCT_ID = 0;
 
 /// @dev Fees account
 bytes32 constant FEES_ACCOUNT = bytes32(0);
+bytes32 constant X_ACCOUNT = 0x0000000000000000000000000000000000000000000000000000000000000001;
 
 string constant DEFAULT_REFERRAL_CODE = "-1";
 
@@ -22,10 +23,14 @@ int128 constant SLOW_MODE_FEE = 1000000; // $1
 int128 constant LIQUIDATION_FEE = 1e18; // $1
 int128 constant HEALTHCHECK_FEE = 1e18; // $1
 
-uint64 constant VERSION = 26;
+uint64 constant VERSION = 27;
 
 uint128 constant INT128_MAX = uint128(type(int128).max);
 
 uint64 constant SECONDS_PER_DAY = 3600 * 24;
 
 uint32 constant VRTX_PRODUCT_ID = 41;
+
+int128 constant LIQUIDATION_FEE_FRACTION = 500_000_000_000_000_000; // 50%
+
+int128 constant INTEREST_FEE_FRACTION = 200_000_000_000_000_000; // 50%

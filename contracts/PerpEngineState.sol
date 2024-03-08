@@ -8,7 +8,7 @@ int128 constant EMA_TIME_CONSTANT_X18 = 998334721450938752;
 int128 constant ONE_DAY_X18 = 86400_000000000000000000; // 24 hours
 
 // we will want to config this later, but for now this is global and a percentage
-int128 constant MAX_DAILY_FUNDING_RATE = 100000000000000000; // 0.1
+int128 constant MAX_DAILY_FUNDING_RATE = 20000000000000000; // 0.02
 
 abstract contract PerpEngineState is IPerpEngine, BaseEngine {
     using MathSD21x18 for int128;
@@ -82,23 +82,45 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         return balance;
     }
 
-    function getBalanceAmount(uint32 productId, bytes32 subaccount)
-        external
+    function _getBalance(uint32 productId, bytes32 subaccount)
+        internal
         view
-        returns (int128)
+        virtual
+        override
+        returns (int128, int128)
     {
-        return getBalance(productId, subaccount).amount;
+        State memory state = states[productId];
+        Balance memory balance = balances[productId][subaccount];
+        _updateBalance(state, balance, 0, 0);
+        return (balance.amount, balance.vQuoteBalance);
     }
 
-    function hasBalance(uint32 productId, bytes32 subaccount)
-        external
+    function _getInLpBalance(uint32 productId, bytes32 subaccount)
+        internal
         view
-        returns (bool)
+        virtual
+        override
+        returns (
+            // baseAmount, quoteAmount, deltaQuoteAmount (funding)
+            int128,
+            int128,
+            int128
+        )
     {
-        return
-            balances[productId][subaccount].amount != 0 ||
-            balances[productId][subaccount].vQuoteBalance != 0 ||
-            lpBalances[productId][subaccount].amount != 0;
+        LpBalance memory lpBalance = lpBalances[productId][subaccount];
+        if (lpBalance.amount == 0) {
+            return (0, 0, 0);
+        }
+        LpState memory lpState = lpStates[productId];
+        int128 ratio = lpBalance.amount.div(lpState.supply);
+        int128 baseAmount = lpState.base.mul(ratio);
+        int128 quoteAmount = lpState.quote.mul(ratio);
+
+        int128 quoteDeltaAmount = lpState
+            .cumulativeFundingPerLpX18
+            .sub(lpBalance.lastCumulativeFundingX18)
+            .mul(lpBalance.amount);
+        return (baseAmount, quoteAmount, quoteDeltaAmount);
     }
 
     function getStatesAndBalances(uint32 productId, bytes32 subaccount)
@@ -121,29 +143,6 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         return (lpState, lpBalance, state, balance);
     }
 
-    function getBalances(uint32 productId, bytes32 subaccount)
-        public
-        view
-        returns (LpBalance memory, Balance memory)
-    {
-        LpState memory lpState = lpStates[productId];
-        State memory state = states[productId];
-        LpBalance memory lpBalance = lpBalances[productId][subaccount];
-        Balance memory balance = balances[productId][subaccount];
-
-        _updateBalance(state, balance, 0, 0);
-        _applyLpBalanceFunding(lpState, lpBalance, balance);
-        return (lpBalance, balance);
-    }
-
-    function getLpState(uint32 productId)
-        external
-        view
-        returns (LpState memory)
-    {
-        return lpStates[productId];
-    }
-
     function updateStates(uint128 dt, int128[] calldata avgPriceDiffs)
         external
         onlyEndpoint
@@ -160,15 +159,12 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
             LpState memory lpState = lpStates[productId];
 
             {
-                int128 indexPriceX18 = getOraclePriceX18(productId);
+                int128 indexPriceX18 = _risk(productId).priceX18;
 
                 // cap this price diff
                 int128 priceDiffX18 = avgPriceDiffs[i];
 
-                int128 maxPriceDiff = dtX18
-                    .div(ONE_DAY_X18)
-                    .mul(MAX_DAILY_FUNDING_RATE)
-                    .mul(indexPriceX18);
+                int128 maxPriceDiff = MAX_DAILY_FUNDING_RATE.mul(indexPriceX18);
 
                 if (priceDiffX18.abs() > maxPriceDiff) {
                     // Proper sign
@@ -201,5 +197,29 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
             states[productId] = state;
             _productUpdate(productId);
         }
+    }
+
+    function getProductIds(uint32 isoGroup)
+        public
+        view
+        override(BaseEngine, IProductEngine)
+        returns (uint32[] memory)
+    {
+        if (isoGroup == 0) {
+            return getCrossProductIds();
+        } else {
+            uint32[] memory productIds = new uint32[](1);
+            productIds[0] = isoGroup;
+            return productIds;
+        }
+    }
+
+    function isPlaceholder(uint32 productId)
+        internal
+        view
+        override
+        returns (bool)
+    {
+        return states[productId].openInterest == 0;
     }
 }

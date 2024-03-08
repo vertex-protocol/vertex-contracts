@@ -3,9 +3,9 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../clearinghouse/IClearinghouse.sol";
-import "./IProductEngineState.sol";
+import "../../libraries/RiskHelper.sol";
 
-interface IProductEngine is IProductEngineState {
+interface IProductEngine {
     event AddProduct(uint32 productId);
 
     enum EngineType {
@@ -26,28 +26,33 @@ interface IProductEngine is IProductEngineState {
         int128 vQuoteDelta;
     }
 
+    struct CoreRisk {
+        int128 amount;
+        int128 price;
+        int128 longWeight;
+    }
+
     /// @notice Initializes the engine
     function initialize(
         address _clearinghouse,
+        address _offchainExchange,
         address _quote,
         address _endpoint,
-        address _admin,
-        address _fees
+        address _admin
     ) external;
 
-    /// @notice updates internal balances; given tuples of (product, subaccount, delta)
-    /// since tuples aren't a thing in solidity, params specify the transpose
-    function applyDeltas(ProductDelta[] calldata deltas) external;
+    function getHealthContribution(
+        bytes32 subaccount,
+        IProductEngine.HealthType healthType
+    ) external view returns (int128);
+
+    function getCoreRisk(
+        bytes32 subaccount,
+        uint32 productId,
+        IProductEngine.HealthType healthType
+    ) external view returns (IProductEngine.CoreRisk memory);
 
     function updateProduct(bytes calldata txn) external;
-
-    function swapLp(
-        uint32 productId,
-        int128 amount,
-        int128 priceX18,
-        int128 sizeIncrement,
-        int128 lpSpreadX18
-    ) external returns (int128, int128);
 
     function swapLp(
         uint32 productId,
@@ -71,8 +76,37 @@ interface IProductEngine is IProductEngineState {
     ) external returns (int128, int128);
 
     function decomposeLps(
+        uint32 isoGroup,
         bytes32 liquidatee,
-        bytes32 liquidator,
-        address feeCalculator
+        bytes32 liquidator
     ) external returns (int128);
+
+    /// @notice return clearinghouse addr
+    function getClearinghouse() external view returns (address);
+
+    /// @notice return productIds associated with engine
+    function getProductIds() external view returns (uint32[] memory);
+
+    /// @notice return productIds associated with an isoGroup
+    // 0 -> cross group
+    function getProductIds(uint32 isoGroup)
+        external
+        view
+        returns (uint32[] memory);
+
+    function getRisk(uint32 productId)
+        external
+        view
+        returns (RiskHelper.Risk memory);
+
+    /// @notice return the type of engine
+    function getEngineType() external pure returns (IProductEngine.EngineType);
+
+    function updatePrice(uint32 productId, int128 priceX18) external;
+
+    function migrate(
+        address[] memory allBooks,
+        RiskHelper.RiskStore[] memory allRisks,
+        int128[] memory minSizes
+    ) external;
 }

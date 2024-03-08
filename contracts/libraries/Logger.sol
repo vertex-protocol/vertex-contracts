@@ -22,6 +22,10 @@ library Logger {
         log(string.concat(message, " ", MathHelper.uint2str(value)));
     }
 
+    //    function log(string memory message, uint32 value) internal {
+    //        log(message, uint128(value));
+    //    }
+
     function log(string memory message, address value) internal {
         log(
             string.concat(message, " ", Strings.toHexString(uint160(value), 20))

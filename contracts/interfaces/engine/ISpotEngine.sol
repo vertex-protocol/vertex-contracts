@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./IProductEngine.sol";
-import "../clearinghouse/IClearinghouseState.sol";
+import "../../libraries/RiskHelper.sol";
 
 interface ISpotEngine is IProductEngine {
     struct Config {
@@ -47,11 +47,10 @@ interface ISpotEngine is IProductEngine {
     struct UpdateProductTx {
         uint32 productId;
         int128 sizeIncrement;
-        int128 priceIncrementX18;
         int128 minSize;
         int128 lpSpreadX18;
         Config config;
-        IClearinghouseState.RiskStore riskStore;
+        RiskHelper.RiskStore riskStore;
     }
 
     function getStateAndBalance(uint32 productId, bytes32 subaccount)
@@ -64,11 +63,6 @@ interface ISpotEngine is IProductEngine {
         view
         returns (Balance memory);
 
-    function hasBalance(uint32 productId, bytes32 subaccount)
-        external
-        view
-        returns (bool);
-
     function getStatesAndBalances(uint32 productId, bytes32 subaccount)
         external
         view
@@ -79,25 +73,31 @@ interface ISpotEngine is IProductEngine {
             Balance memory
         );
 
-    function getBalances(uint32 productId, bytes32 subaccount)
-        external
-        view
-        returns (LpBalance memory, Balance memory);
-
-    function getLpState(uint32 productId)
-        external
-        view
-        returns (LpState memory);
-
     function getConfig(uint32 productId) external view returns (Config memory);
 
     function getWithdrawFee(uint32 productId) external view returns (int128);
 
-    function isPlaceholder(uint32 productId) external view returns (bool);
-
     function getToken(uint32 productId) external view returns (address);
 
-    function updateStates(uint128 dt) external;
+    function updateBalance(
+        uint32 productId,
+        bytes32 subaccount,
+        int128 amountDelta
+    ) external;
+
+    function updateBalance(
+        uint32 productId,
+        bytes32 subaccount,
+        int128 amountDelta,
+        int128 quoteDelta
+    ) external;
+
+    function updateQuoteFromInsurance(bytes32 subaccount, int128 insurance)
+        external
+        returns (int128);
+
+    function updateStates(uint128 dt, int128[] calldata utilizationRatiosX18)
+        external;
 
     function manualAssert(
         int128[] calldata totalDeposits,
