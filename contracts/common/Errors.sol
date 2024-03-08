@@ -107,9 +107,8 @@ string constant ERR_CONVERSION_OVERFLOW = "CO";
 string constant ERR_ONLY_CLEARINGHOUSE_CAN_SET_BOOK = "OCCSB";
 
 // we match on containing these strings in sequencer
-string constant ERR_INVALID_SUBMISSION_INDEX = "invalid submission index";
+string constant ERR_INVALID_SUBMISSION_INDEX = "IX";
 string constant ERR_NO_SLOW_MODE_TXS_REMAINING = "no slow mode transactions remaining";
-
 string constant ERR_INVALID_COUNT = "IC";
 string constant ERR_SLOW_TX_TOO_RECENT = "STTR";
 string constant ERR_WALLET_NOT_TRANSFERABLE = "WNT";
@@ -123,3 +122,7 @@ string constant ERR_WRONG_NONCE = "WN";
 // ERR_FULL_UTILIZATION but the shortened
 // error string may make people mad on the frontend
 string constant ERR_MAX_UTILIZATION = "MU";
+
+string constant ERR_INVALID_RISK_GROUP = "IRG";
+
+string constant ERR_VERIFY_SCHNORR = "VSR";

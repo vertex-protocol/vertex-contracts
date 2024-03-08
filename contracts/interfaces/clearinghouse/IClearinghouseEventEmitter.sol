@@ -3,11 +3,7 @@ pragma solidity ^0.8.0;
 
 interface IClearinghouseEventEmitter {
     /// @notice Emitted during initialization
-    event ClearinghouseInitialized(
-        address endpoint,
-        address quote,
-        address fees
-    );
+    event ClearinghouseInitialized(address endpoint, address quote);
 
     /// @notice Emitted when collateral is modified for a subaccount
     event ModifyCollateral(
@@ -19,10 +15,9 @@ interface IClearinghouseEventEmitter {
     event Liquidation(
         bytes32 indexed liquidatorSubaccount,
         bytes32 indexed liquidateeSubaccount,
-        uint8 indexed mode,
-        uint32 healthGroup,
+        uint32 productId,
+        bool isEncodedSpread,
         int128 amount,
-        int128 amountQuote,
-        int128 insuranceCover
+        int128 amountQuote
     );
 }

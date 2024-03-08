@@ -19,12 +19,12 @@ contract PerpEngine is PerpEngineLp, Version {
 
     function initialize(
         address _clearinghouse,
-        address _quote,
+        address _offchainExchange,
+        address,
         address _endpoint,
-        address _admin,
-        address _fees
+        address _admin
     ) external {
-        _initialize(_clearinghouse, _quote, _endpoint, _admin, _fees);
+        _initialize(_clearinghouse, _offchainExchange, _endpoint, _admin);
     }
 
     function getEngineType() external pure returns (EngineType) {
@@ -37,20 +37,18 @@ contract PerpEngine is PerpEngineLp, Version {
 
     /// @notice adds a new product with default parameters
     function addProduct(
-        uint32 healthGroup,
+        uint32 productId,
         address book,
         int128 sizeIncrement,
-        int128 priceIncrementX18,
         int128 minSize,
         int128 lpSpreadX18,
-        IClearinghouseState.RiskStore calldata riskStore
+        RiskHelper.RiskStore calldata riskStore
     ) public onlyOwner {
-        uint32 productId = _addProductForId(
-            healthGroup,
+        _addProductForId(
+            productId,
             riskStore,
             book,
             sizeIncrement,
-            priceIncrementX18,
             minSize,
             lpSpreadX18
         );
@@ -73,9 +71,9 @@ contract PerpEngine is PerpEngineLp, Version {
 
     /// @notice changes the configs of a product, if a new book is provided
     /// also clears the book
-    function updateProduct(bytes calldata tx) external onlyEndpoint {
-        UpdateProductTx memory tx = abi.decode(tx, (UpdateProductTx));
-        IClearinghouseState.RiskStore memory riskStore = tx.riskStore;
+    function updateProduct(bytes calldata rawTxn) external onlyEndpoint {
+        UpdateProductTx memory txn = abi.decode(rawTxn, (UpdateProductTx));
+        RiskHelper.RiskStore memory riskStore = txn.riskStore;
 
         require(
             riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
@@ -83,55 +81,46 @@ contract PerpEngine is PerpEngineLp, Version {
                 riskStore.shortWeightMaintenance,
             ERR_BAD_PRODUCT_CONFIG
         );
-        markets[tx.productId].modifyConfig(
-            tx.sizeIncrement,
-            tx.priceIncrementX18,
-            tx.minSize,
-            tx.lpSpreadX18
-        );
 
-        _clearinghouse.modifyProductConfig(tx.productId, riskStore);
+        RiskHelper.RiskStore memory r = _risk().value[txn.productId];
+        r.longWeightInitial = riskStore.longWeightInitial;
+        r.shortWeightInitial = riskStore.shortWeightInitial;
+        r.longWeightMaintenance = riskStore.longWeightMaintenance;
+        r.shortWeightMaintenance = riskStore.shortWeightMaintenance;
+        _risk().value[txn.productId] = r;
+
+        _exchange().updateMarket(
+            txn.productId,
+            address(0),
+            txn.sizeIncrement,
+            txn.minSize,
+            txn.lpSpreadX18
+        );
     }
 
-    /// @notice updates internal balances; given tuples of (product, subaccount, delta)
-    /// since tuples aren't a thing in solidity, params specify the transpose
-    function applyDeltas(IProductEngine.ProductDelta[] calldata deltas)
-        external
-    {
+    function updateBalance(
+        uint32 productId,
+        bytes32 subaccount,
+        int128 amountDelta,
+        int128 vQuoteDelta
+    ) external {
         // Only a market book can apply deltas
-        checkCanApplyDeltas();
+        _assertInternal();
+        State memory state = states[productId];
+        Balance memory balance = balances[productId][subaccount];
 
-        // May load the same product multiple times
-        for (uint32 i = 0; i < deltas.length; i++) {
-            uint32 productId = deltas[i].productId;
-            // For perps, quote deltas are applied in `vQuoteDelta`
-            if (
-                productId == QUOTE_PRODUCT_ID ||
-                (deltas[i].amountDelta == 0 && deltas[i].vQuoteDelta == 0)
-            ) {
-                continue;
-            }
+        _updateBalance(state, balance, amountDelta, vQuoteDelta);
 
-            bytes32 subaccount = deltas[i].subaccount;
-            int128 amountDelta = deltas[i].amountDelta;
-            int128 vQuoteDelta = deltas[i].vQuoteDelta;
-
-            State memory state = states[productId];
-            Balance memory balance = balances[productId][subaccount];
-
-            _updateBalance(state, balance, amountDelta, vQuoteDelta);
-
-            states[productId] = state;
-            balances[productId][subaccount] = balance;
-            _balanceUpdate(productId, subaccount);
-        }
+        states[productId] = state;
+        balances[productId][subaccount] = balance;
+        _balanceUpdate(productId, subaccount);
     }
 
     function settlePnl(bytes32 subaccount, uint256 productIds)
         external
         returns (int128)
     {
-        checkCanApplyDeltas();
+        _assertInternal();
         int128 totalSettled = 0;
 
         while (productIds != 0) {
@@ -168,7 +157,7 @@ contract PerpEngine is PerpEngineLp, Version {
         Balance memory balance,
         uint32 productId
     ) internal view returns (int128 positionPnl) {
-        int128 priceX18 = getOraclePriceX18(productId);
+        int128 priceX18 = _risk(productId).priceX18;
 
         (int128 ammBase, int128 ammQuote) = MathHelper.ammEquilibrium(
             lpState.base,
@@ -232,8 +221,10 @@ contract PerpEngine is PerpEngineLp, Version {
     {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
-        for (uint128 i = 0; i < productIds.length; ++i) {
-            uint32 productId = productIds[i];
+        uint32 isoGroup = RiskHelper.isoGroup(subaccount);
+        uint32[] memory _productIds = getProductIds(isoGroup);
+        for (uint128 i = 0; i < _productIds.length; ++i) {
+            uint32 productId = _productIds[i];
             (State memory state, Balance memory balance) = getStateAndBalance(
                 productId,
                 subaccount
