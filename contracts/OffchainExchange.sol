@@ -196,19 +196,6 @@ contract OffchainExchange is
         lpParams[productId] = LpParams(lpSpreadX18);
     }
 
-    // TODO: remove this function after migration.
-    function updateCollectedFees(uint32 productId, int128 collectedFees)
-        external
-        virtual
-    {
-        require(
-            msg.sender == address(spotEngine) ||
-                msg.sender == address(perpEngine),
-            "only engine can modify config"
-        );
-        marketInfo[productId].collectedFees = collectedFees;
-    }
-
     function getLpParams(uint32 productId)
         external
         view
@@ -888,5 +875,22 @@ contract OffchainExchange is
             virtualBooks[i] = virtualBookContract[i];
         }
         return virtualBooks;
+    }
+
+    // TODO: remove this function after migration
+    function updateMinSizes(
+        uint32[] memory productIds,
+        int128[] memory minSizes
+    ) external onlyOwner {
+        require(productIds.length == minSizes.length, "invalid inputs.");
+        for (uint32 i = 0; i < productIds.length; i++) {
+            uint32 productId = productIds[i];
+            int128 minSize = minSizes[i];
+            require(
+                marketInfo[productId].minSize != 0,
+                "market doesn't exist."
+            );
+            marketInfo[productId].minSize = int64(minSize / 1e9);
+        }
     }
 }

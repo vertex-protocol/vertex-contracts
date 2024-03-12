@@ -148,16 +148,15 @@ contract ClearinghouseLiq is
         if (spotId == 0) {
             // risk of this product is not involved in spread netting
             require(!txn.isEncodedSpread, ERR_INVALID_LIQUIDATION_PARAMS);
-
-            if (isPerp) {
-                originalBalance = perpEngine
-                    .getBalance(perpId, txn.liquidatee)
-                    .amount;
-            } else {
-                originalBalance = spotEngine
-                    .getBalance(txn.productId, txn.liquidatee)
-                    .amount;
-            }
+            originalBalance = perpEngine
+                .getBalance(perpId, txn.liquidatee)
+                .amount;
+        } else if (perpId == 0) {
+            // risk of this product is not involved in spread netting
+            require(!txn.isEncodedSpread, ERR_INVALID_LIQUIDATION_PARAMS);
+            originalBalance = spotEngine
+                .getBalance(spotId, txn.liquidatee)
+                .amount;
         } else {
             int128 spotAmount = spotEngine
                 .getBalance(spotId, txn.liquidatee)

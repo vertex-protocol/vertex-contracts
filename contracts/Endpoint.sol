@@ -793,8 +793,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         returns (int128 _priceX18)
     {
         _priceX18 = priceX18[productId];
-        // add this back after migration
-        // require(_priceX18 != 0, ERR_INVALID_PRODUCT);
+        require(_priceX18 != 0, ERR_INVALID_PRODUCT);
     }
 
     function getTime() external view returns (uint128) {
@@ -841,25 +840,5 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         onlyOwner
     {
         transferableWallets[wallet] = true;
-    }
-
-    // TODO: remove this function after migration.
-    function getBook(uint32 productId) external view returns (address) {
-        return books[productId];
-    }
-
-    // TODO: remove this function after migration.
-    function migrate(
-        address _offchainExchange,
-        address _verifier,
-        uint32 maxHealthGroup
-    ) external {
-        require(msg.sender == address(clearinghouse), ERR_UNAUTHORIZED);
-        offchainExchange = _offchainExchange;
-        verifier = IVerifier(_verifier);
-        for (uint32 i = 0; i <= maxHealthGroup; i++) {
-            priceX18[i * 2 + 1] = pricesX18[i].spotPriceX18;
-            priceX18[i * 2 + 2] = pricesX18[i].perpPriceX18;
-        }
     }
 }

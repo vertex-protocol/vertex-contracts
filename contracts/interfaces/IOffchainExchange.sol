@@ -92,7 +92,4 @@ interface IOffchainExchange is IVersion {
     function matchOrders(IEndpoint.MatchOrdersWithSigner calldata tx) external;
 
     function dumpFees() external;
-
-    function updateCollectedFees(uint32 productId, int128 collectedFees)
-        external;
 }

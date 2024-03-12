@@ -313,14 +313,4 @@ interface IEndpoint is IVersion {
     function getOffchainExchange() external view returns (address);
 
     function getPriceX18(uint32 productId) external view returns (int128);
-
-    // TODO: remove this function after migration.
-    function getBook(uint32 productId) external view returns (address);
-
-    // TODO: remove this function after migration.
-    function migrate(
-        address _offchainExchange,
-        address _verifier,
-        uint32 maxHealthGroup
-    ) external;
 }

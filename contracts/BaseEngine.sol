@@ -11,7 +11,6 @@ import "./libraries/MathSD21x18.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./interfaces/engine/IProductEngine.sol";
 import "./interfaces/IOffchainExchange.sol";
-import "./interfaces/IOffchainBook.sol";
 import "./interfaces/IEndpoint.sol";
 import "./EndpointGated.sol";
 import "./libraries/Logger.sol";
@@ -292,52 +291,17 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         _risk().value[productId].priceX18 = priceX18;
     }
 
-    // TODO: remove this function after migration.
-    function isPlaceholder(uint32 productId)
-        internal
-        view
-        virtual
-        returns (bool)
-    {}
+    function updateRisk(uint32 productId, RiskHelper.RiskStore memory riskStore)
+        external
+        onlyOwner
+    {
+        require(
+            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial >=
+                riskStore.shortWeightMaintenance,
+            ERR_BAD_PRODUCT_CONFIG
+        );
 
-    // TODO: remove this function after migration.
-    function migrate(
-        address[] memory allBooks,
-        RiskHelper.RiskStore[] memory allRisks,
-        int128[] memory minSizes
-    ) external {
-        require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
-        canApplyDeltas[address(_exchange())] = true;
-        uint32[] memory _productIds = getProductIds();
-        delete productIds;
-        uint256 mask = 0;
-        for (uint256 i = 0; i < _productIds.length; i++) {
-            uint32 productId = _productIds[i];
-            if (isPlaceholder(productId)) {
-                continue;
-            }
-            productIds.push(productId);
-            if (productId < 256) {
-                mask |= 1 << productId;
-            }
-            _risk().value[productId] = allRisks[productId];
-            if (productId != QUOTE_PRODUCT_ID) {
-                address book = allBooks[productId];
-                IOffchainBook.Market memory market = IOffchainBook(book)
-                    .getMarket();
-                _exchange().updateMarket(
-                    productId,
-                    book,
-                    market.sizeIncrement,
-                    minSizes[productId],
-                    market.lpSpreadX18
-                );
-                _exchange().updateCollectedFees(
-                    productId,
-                    market.collectedFees
-                );
-            }
-        }
-        _crossMask().value = mask;
+        _risk().value[productId] = riskStore;
     }
 }

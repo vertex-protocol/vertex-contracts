@@ -508,49 +508,6 @@ contract Clearinghouse is
         return spreads;
     }
 
-    // TODO: remove this function after migration.
-    function migrate(
-        address _offchainExchange,
-        address _verifier,
-        uint256 _spreads,
-        int128[] memory minSizes
-    ) external onlyOwner {
-        require(minSizes.length == numProducts, "invalid length for minSizes");
-        spreads = _spreads;
-        IEndpoint(getEndpoint()).migrate(
-            _offchainExchange,
-            _verifier,
-            maxHealthGroup
-        );
-        address[] memory allBooks = new address[](numProducts);
-        RiskHelper.RiskStore[] memory allRisks = new RiskHelper.RiskStore[](
-            numProducts
-        );
-        for (uint32 productId = 0; productId < numProducts; productId++) {
-            allBooks[productId] = IEndpoint(getEndpoint()).getBook(productId);
-            allRisks[productId] = RiskHelper.RiskStore({
-                longWeightInitial: risks[productId].longWeightInitial,
-                shortWeightInitial: risks[productId].shortWeightInitial,
-                longWeightMaintenance: risks[productId].longWeightMaintenance,
-                shortWeightMaintenance: risks[productId].shortWeightMaintenance,
-                priceX18: IEndpoint(getEndpoint()).getPriceX18(productId)
-            });
-            if (productId == 0) {
-                allRisks[productId].priceX18 = ONE;
-            }
-        }
-        IProductEngine(engineByType[IProductEngine.EngineType.SPOT]).migrate(
-            allBooks,
-            allRisks,
-            minSizes
-        );
-        IProductEngine(engineByType[IProductEngine.EngineType.PERP]).migrate(
-            allBooks,
-            allRisks,
-            minSizes
-        );
-    }
-
     function configurePoints(
         address blastPoints,
         address blast,

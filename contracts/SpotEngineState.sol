@@ -443,13 +443,4 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             return productIds;
         }
     }
-
-    function isPlaceholder(uint32 productId)
-        internal
-        view
-        override
-        returns (bool)
-    {
-        return states[productId].totalDepositsNormalized == 0;
-    }
 }

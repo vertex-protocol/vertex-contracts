@@ -70,7 +70,7 @@ contract SpotEngine is SpotEngineLP, Version {
         } else if (productId == 1) {
             // BTC
             return 4e13;
-        } else if (productId == 3) {
+        } else if (productId == 3 || productId == 91) {
             // ETH
             return 6e14;
         } else if (productId == 5) {
