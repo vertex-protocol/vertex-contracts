@@ -103,10 +103,4 @@ interface IProductEngine {
     function getEngineType() external pure returns (IProductEngine.EngineType);
 
     function updatePrice(uint32 productId, int128 priceX18) external;
-
-    function migrate(
-        address[] memory allBooks,
-        RiskHelper.RiskStore[] memory allRisks,
-        int128[] memory minSizes
-    ) external;
 }

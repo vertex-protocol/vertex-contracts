@@ -213,13 +213,4 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
             return productIds;
         }
     }
-
-    function isPlaceholder(uint32 productId)
-        internal
-        view
-        override
-        returns (bool)
-    {
-        return states[productId].openInterest == 0;
-    }
 }
