@@ -208,7 +208,7 @@ contract SpotEngine is SpotEngineLP, Version {
             subaccount
         ].balance;
 
-        if (subaccount == X_ACCOUNT) {
+        if (subaccount == X_ACCOUNT && migrationFlag == 0) {
             _updateBalanceNormalizedNoTotals(state, balance, amountDelta);
             _updateBalanceNormalizedNoTotals(
                 quoteState,
@@ -249,7 +249,7 @@ contract SpotEngine is SpotEngineLP, Version {
 
         BalanceNormalized memory balance = balances[productId][subaccount]
             .balance;
-        if (subaccount == X_ACCOUNT) {
+        if (subaccount == X_ACCOUNT && migrationFlag == 0) {
             _updateBalanceNormalizedNoTotals(state, balance, amountDelta);
         } else {
             _updateBalanceNormalized(state, balance, amountDelta);
@@ -281,7 +281,7 @@ contract SpotEngine is SpotEngineLP, Version {
         int128 totalBorrows = _state.totalBorrowsNormalized.mul(
             _state.cumulativeBorrowsMultiplierX18
         );
-        if (_balance.amount < 0) {
+        if (_balance.amount < 0 && migrationFlag == 0) {
             totalDeposits += _balance.amount;
         }
         require(totalDeposits >= totalBorrows, ERR_MAX_UTILIZATION);
