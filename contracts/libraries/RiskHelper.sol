@@ -117,11 +117,11 @@ library RiskHelper {
     // |default| 0 0 0 0 0|
 
     function isoGroup(bytes32 subaccount) internal pure returns (uint32) {
-        uint256 s = uint256(subaccount);
+        // uint256 s = uint256(subaccount);
         // int.from_bytes(b'iso', byteorder='big')
-        if (uint24(s) == 6910831) {
-            return uint32(s >> 24);
-        }
+        // if (uint24(s) == 6910831) {
+        //     return uint32(s >> 24);
+        // }
         return 0;
     }
 

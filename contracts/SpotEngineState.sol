@@ -16,6 +16,8 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
 
     mapping(uint32 => int128) internal withdrawFees;
 
+    uint64 public migrationFlag;
+
     function _updateBalanceWithoutDelta(
         State memory state,
         Balance memory balance
@@ -153,6 +155,13 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         uint128 dt
     ) internal {
         int128 borrowRateMultiplierX18;
+        int128 totalDeposits = state.totalDepositsNormalized.mul(
+            state.cumulativeDepositsMultiplierX18
+        );
+        int128 totalBorrows = state.totalBorrowsNormalized.mul(
+            state.cumulativeBorrowsMultiplierX18
+        );
+        utilizationRatioX18 = totalBorrows.div(totalDeposits);
         {
             Config memory config = configs[productId];
 
@@ -200,9 +209,6 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         // (td * cdm * depositRateMultiplier - tb * cbm * borrowRateMultiplier)
         // so we can get
         // depositRateMultiplier = utilization * (borrowRateMultiplier - 1) + 1
-        int128 totalDeposits = state.totalDepositsNormalized.mul(
-            state.cumulativeDepositsMultiplierX18
-        );
 
         int128 totalDepositRateX18 = utilizationRatioX18.mul(
             borrowRateMultiplierX18 - ONE
@@ -218,25 +224,6 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             totalDepositRateX18 - realizedDepositRateX18
         );
 
-        int128 deltaX = state
-            .totalBorrowsNormalized
-            .mul(state.cumulativeBorrowsMultiplierX18)
-            .mul(borrowRateMultiplierX18 - ONE) -
-            totalDeposits.mul(realizedDepositRateX18) -
-            feesAmt;
-
-        //        if (productId == 0) {
-        //
-        //            Logger.log("borrowInc", state
-        //            .totalBorrowsNormalized
-        //            .mul(state.cumulativeBorrowsMultiplierX18));
-        //
-        //            Logger.log("depositInc", totalDeposits.mul(realizedDepositRateX18));
-        //            Logger.log("feesAmt", feesAmt);
-        //
-        //            Logger.log("deltaX", deltaX);
-        //        }
-
         state.cumulativeBorrowsMultiplierX18 = state
             .cumulativeBorrowsMultiplierX18
             .mul(borrowRateMultiplierX18);
@@ -244,25 +231,6 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         state.cumulativeDepositsMultiplierX18 = state
             .cumulativeDepositsMultiplierX18
             .mul(ONE + realizedDepositRateX18);
-
-        {
-            BalanceNormalized memory xAccountBalance = balances[productId][
-                X_ACCOUNT
-            ].balance;
-
-            if (xAccountBalance.amountNormalized > 0) {
-                xAccountBalance.amountNormalized = xAccountBalance
-                    .amountNormalized
-                    .div(ONE + realizedDepositRateX18);
-            } else {
-                xAccountBalance.amountNormalized = xAccountBalance
-                    .amountNormalized
-                    .div(borrowRateMultiplierX18);
-            }
-            _updateBalanceNormalizedNoTotals(state, xAccountBalance, deltaX);
-            balances[productId][X_ACCOUNT].balance = xAccountBalance;
-            _balanceUpdate(productId, X_ACCOUNT);
-        }
 
         if (feesAmt != 0) {
             BalanceNormalized memory feesAccBalance = balances[productId][
@@ -403,10 +371,30 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         );
     }
 
+    function _tryMigrateStates() internal {
+        if (migrationFlag != 0) return;
+        migrationFlag = 1;
+        uint32[] memory _productIds = getProductIds();
+        for (uint128 i = 0; i < _productIds.length; i++) {
+            uint32 productId = _productIds[i];
+            BalanceNormalized memory balance = balances[productId][X_ACCOUNT]
+                .balance;
+            State memory state = states[productId];
+            if (balance.amountNormalized >= 0) {
+                state.totalDepositsNormalized += balance.amountNormalized;
+            } else {
+                state.totalBorrowsNormalized -= balance.amountNormalized;
+            }
+            states[productId] = state;
+            _productUpdate(productId);
+        }
+    }
+
     function updateStates(uint128 dt, int128[] calldata globalUtilRatiosX18)
         external
         onlyEndpoint
     {
+        _tryMigrateStates();
         State memory quoteState;
         require(dt < 7 * SECONDS_PER_DAY, ERR_INVALID_TIME);
         for (uint32 i = 0; i < globalUtilRatiosX18.length; i++) {

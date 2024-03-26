@@ -313,6 +313,9 @@ contract ClearinghouseLiq is
             for (uint32 i = 1; i < spotIds.length; ++i) {
                 uint32 spotId = spotIds[i];
                 if ((clearedSpotIds & (1 << spotId)) == 0) {
+                    if (spotEngine.getRisk(spotId).longWeightInitialX18 == 0) {
+                        continue;
+                    }
                     ISpotEngine.Balance memory balance = spotEngine.getBalance(
                         spotId,
                         txn.liquidatee
