@@ -185,10 +185,14 @@ contract ClearinghouseLiq is
                     (, ISpotEngine.Balance memory quoteBalance) = spotEngine
                         .getStateAndBalance(QUOTE_PRODUCT_ID, txn.liquidatee);
                     // this is the cross account
+                    int128 maximumLiquidatable = (quoteBalance.amount +
+                        insurance).div(liquidationPrice);
+                    maximumLiquidatable = MathHelper.max(
+                        maximumLiquidatable + 1,
+                        0
+                    );
                     basisAmount = MathHelper.max(
-                        -((quoteBalance.amount + insurance).div(
-                            liquidationPrice
-                        ) + 1),
+                        -maximumLiquidatable,
                         basisAmount
                     );
                 }
