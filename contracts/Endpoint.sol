@@ -484,6 +484,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         } else if (txType == TransactionType.LinkSigner) {
             LinkSigner memory txn = abi.decode(transaction[1:], (LinkSigner));
             validateSender(txn.sender, sender);
+            requireSubaccount(txn.sender);
             linkedSigners[txn.sender] = address(uint160(bytes20(txn.signer)));
         } else if (txType == TransactionType.BurnLpAndTransfer) {
             BurnLpAndTransfer memory txn = abi.decode(
@@ -654,6 +655,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 fees[i] = sequencerFee[spotIds[i]];
                 sequencerFee[spotIds[i]] = 0;
             }
+            requireSubaccount(txn.subaccount);
             clearinghouse.claimSequencerFees(txn, fees);
         } else if (txType == TransactionType.ManualAssert) {
             ManualAssert memory txn = abi.decode(
@@ -840,5 +842,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         onlyOwner
     {
         transferableWallets[wallet] = true;
+    }
+
+    function updateSanctions(address _sanctions) external onlyOwner {
+        sanctions = ISanctionsList(_sanctions);
     }
 }
