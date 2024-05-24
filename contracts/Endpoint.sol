@@ -390,16 +390,17 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint256 gasRemaining = gasleft();
         try this.processSlowModeTransaction(txn.sender, txn.tx) {} catch {
             // we need to differentiate between a revert and an out of gas
-            // the expectation is that because 63/64 * gasRemaining is forwarded
-            // we should be able to differentiate based on whether
-            // gasleft() >= gasRemaining / 64. however, experimentally
-            // even more gas can be remaining, and i don't have a clear
-            // understanding as to why. as a result we just err on the
-            // conservative side and provide two conservative
-            // asserts that should cover all cases at the expense of needing
-            // to provide a higher gas limit than necessary
+            // the issue is that in evm every inner call only 63/64 of the
+            // remaining gas in the outer frame is forwarded. as a result
+            // the amount of gas left for execution is (63/64)**len(stack)
+            // and you can get an out of gas while spending an arbitrarily
+            // low amount of gas in the final frame. we use a heuristic
+            // here that isn't perfect but covers our cases.
+            // having gasleft() <= gasRemaining / 2 buys us 44 nested calls
+            // before we miss out of gas errors; 1/2 ~= (63/64)**44
+            // this is good enough for our purposes
 
-            if (gasleft() <= 100000 || gasleft() <= gasRemaining / 16) {
+            if (gasleft() <= 250000 || gasleft() <= gasRemaining / 2) {
                 assembly {
                     invalid()
                 }
@@ -807,10 +808,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     function getOffchainExchange() external view returns (address) {
         return offchainExchange;
-    }
-
-    function setSequencer(address _sequencer) external onlyOwner {
-        sequencer = _sequencer;
     }
 
     function getSequencer() external view returns (address) {

@@ -4,6 +4,7 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol";
 import "./Version.sol";
+import "./common/Errors.sol";
 import "./libraries/MathHelper.sol";
 import "./interfaces/IVerifier.sol";
 
@@ -126,7 +127,8 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier, Version {
                 message,
                 e,
                 s
-            )
+            ),
+            "Verification failed"
         );
     }
 
