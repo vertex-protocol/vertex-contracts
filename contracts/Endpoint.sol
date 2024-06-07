@@ -464,7 +464,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             clearinghouse.depositInsurance(txn);
         } else if (txType == TransactionType.MintLp) {
             MintLp memory txn = abi.decode(transaction[1:], (MintLp));
-            require(txn.productId % 2 == 1);
+            require(
+                clearinghouse.getEngineByProduct(txn.productId) ==
+                    clearinghouse.getEngineByType(
+                        IProductEngine.EngineType.SPOT
+                    )
+            );
             validateSender(txn.sender, sender);
             clearinghouse.mintLp(txn);
         } else if (txType == TransactionType.BurnLp) {
@@ -740,7 +745,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint64 idx,
         bytes[] calldata transactions,
         bytes32 e,
-        bytes32 s
+        bytes32 s,
+        uint8 signerBitmask
     ) external {
         require(idx == nSubmissions, ERR_INVALID_SUBMISSION_INDEX);
         require(msg.sender == sequencer);
@@ -751,7 +757,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         for (uint256 i = 0; i < transactions.length; ++i) {
             digest = keccak256(abi.encodePacked(digest, transactions[i]));
         }
-        verifier.requireValidSignature(digest, e, s, 7);
+        verifier.requireValidSignature(digest, e, s, signerBitmask);
 
         for (uint256 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];

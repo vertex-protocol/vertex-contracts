@@ -65,23 +65,26 @@ contract SpotEngine is SpotEngineLP, Version {
     function getWithdrawFee(uint32 productId) external pure returns (int128) {
         // TODO: use the map the store withdraw fees
         // return withdrawFees[productId];
-        if (productId == QUOTE_PRODUCT_ID) {
+        if (
+            productId == QUOTE_PRODUCT_ID ||
+            productId == 5 ||
+            productId == 31 ||
+            productId == 41 ||
+            productId == 109
+        ) {
+            // USDC, ARB, USDT, VRTX, MNT
             return 1e18;
         } else if (productId == 1) {
             // BTC
             return 4e13;
-        } else if (productId == 3 || productId == 91) {
-            // ETH
+        } else if (
+            productId == 3 ||
+            productId == 91 ||
+            productId == 93 ||
+            productId == 111
+        ) {
+            // ETH (arbi), ETH (blast), ETH (mantle), wETH
             return 6e14;
-        } else if (productId == 5) {
-            // ARB
-            return 1e18;
-        } else if (productId == 31) {
-            // USDT
-            return 1e18;
-        } else if (productId == 41) {
-            // VRTX
-            return 1e18;
         }
         return 0;
     }
@@ -93,6 +96,7 @@ contract SpotEngine is SpotEngineLP, Version {
     /// @notice adds a new product with default parameters
     function addProduct(
         uint32 productId,
+        uint32 quoteId,
         address book,
         int128 sizeIncrement,
         int128 minSize,
@@ -103,11 +107,12 @@ contract SpotEngine is SpotEngineLP, Version {
         require(productId != QUOTE_PRODUCT_ID);
         _addProductForId(
             productId,
-            riskStore,
+            quoteId,
             book,
             sizeIncrement,
             minSize,
-            lpSpreadX18
+            lpSpreadX18,
+            riskStore
         );
 
         configs[productId] = config;
@@ -135,10 +140,7 @@ contract SpotEngine is SpotEngineLP, Version {
                     riskStore.longWeightMaintenance &&
                     riskStore.shortWeightInitial >=
                     riskStore.shortWeightMaintenance &&
-                    // we messed up placeholder's token address so we have to find
-                    // a new way to check whether a product is a placeholder.
-                    (states[txn.productId].totalDepositsNormalized == 0 ||
-                        configs[txn.productId].token == txn.config.token),
+                    configs[txn.productId].token == txn.config.token,
                 ERR_BAD_PRODUCT_CONFIG
             );
 
@@ -151,6 +153,7 @@ contract SpotEngine is SpotEngineLP, Version {
 
             _exchange().updateMarket(
                 txn.productId,
+                type(uint32).max,
                 address(0),
                 txn.sizeIncrement,
                 txn.minSize,
