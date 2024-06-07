@@ -20,6 +20,11 @@ abstract contract SpotEngineLP is SpotEngineState {
             ERR_INVALID_LP_AMOUNT
         );
 
+        require(
+            _exchange().getMarketInfo(productId).quoteId == QUOTE_PRODUCT_ID,
+            ERR_INVALID_PRODUCT
+        );
+
         LpState memory lpState = lpStates[productId];
         State memory base = states[productId];
         //        State memory quote = _getQuoteState(RiskHelper.isoGroup(subaccount));

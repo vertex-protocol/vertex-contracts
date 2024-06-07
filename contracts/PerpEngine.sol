@@ -46,11 +46,12 @@ contract PerpEngine is PerpEngineLp, Version {
     ) public onlyOwner {
         _addProductForId(
             productId,
-            riskStore,
+            QUOTE_PRODUCT_ID,
             book,
             sizeIncrement,
             minSize,
-            lpSpreadX18
+            lpSpreadX18,
+            riskStore
         );
 
         states[productId] = State({
@@ -91,6 +92,7 @@ contract PerpEngine is PerpEngineLp, Version {
 
         _exchange().updateMarket(
             txn.productId,
+            type(uint32).max,
             address(0),
             txn.sizeIncrement,
             txn.minSize,
