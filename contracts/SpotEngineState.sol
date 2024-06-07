@@ -397,7 +397,7 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         _tryMigrateStates();
         State memory quoteState;
         require(dt < 7 * SECONDS_PER_DAY, ERR_INVALID_TIME);
-        for (uint32 i = 0; i < globalUtilRatiosX18.length; i++) {
+        for (uint32 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
             State memory state = states[productId];
             if (productId == QUOTE_PRODUCT_ID) {
@@ -407,7 +407,7 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
                 continue;
             }
             LpState memory lpState = lpStates[productId];
-            _updateState(productId, state, globalUtilRatiosX18[i], dt);
+            _updateState(productId, state, 0, dt);
             _updateBalanceWithoutDelta(state, lpState.base);
             _updateBalanceWithoutDelta(quoteState, lpState.quote);
             lpStates[productId] = lpState;

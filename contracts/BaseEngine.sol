@@ -243,11 +243,12 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
 
     function _addProductForId(
         uint32 productId,
-        RiskHelper.RiskStore memory riskStore,
+        uint32 quoteId,
         address virtualBook,
         int128 sizeIncrement,
         int128 minSize,
-        int128 lpSpreadX18
+        int128 lpSpreadX18,
+        RiskHelper.RiskStore memory riskStore
     ) internal {
         require(virtualBook != address(0));
         require(
@@ -263,9 +264,20 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         _clearinghouse.registerProduct(productId);
 
         productIds.push(productId);
+        // product ids are in ascending order
+        for (uint256 i = productIds.length - 1; i > 0; i--) {
+            if (productIds[i] < productIds[i - 1]) {
+                uint32 t = productIds[i];
+                productIds[i] = productIds[i - 1];
+                productIds[i - 1] = t;
+            } else {
+                break;
+            }
+        }
 
         _exchange().updateMarket(
             productId,
+            quoteId,
             virtualBook,
             sizeIncrement,
             minSize,
