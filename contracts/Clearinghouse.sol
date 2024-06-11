@@ -300,6 +300,9 @@ contract Clearinghouse is
         uint128 amount,
         address sendTo
     ) external virtual onlyEndpoint {
+        // TODO: remove this after we support WETH on mantle.
+        require(productId != 93, ERR_INVALID_PRODUCT);
+
         require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
@@ -332,6 +335,9 @@ contract Clearinghouse is
         virtual
         onlyEndpoint
     {
+        // TODO: remove this after we support WETH on mantle.
+        require(txn.productId != 93, ERR_INVALID_PRODUCT);
+
         require(txn.productId != QUOTE_PRODUCT_ID);
         productToEngine[txn.productId].mintLp(
             txn.productId,

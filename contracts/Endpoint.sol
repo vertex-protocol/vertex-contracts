@@ -53,7 +53,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint128 spotTime;
     }
 
-    Times private times;
+    Times internal times;
 
     mapping(uint32 => int128) private sequencerFee;
 
@@ -277,6 +277,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         string memory referralCode
     ) public {
         require(bytes(referralCode).length != 0, ERR_INVALID_REFERRAL_CODE);
+        // TODO: remove this after we support WETH on mantle.
+        require(productId != 93, ERR_INVALID_PRODUCT);
 
         address sender = address(bytes20(subaccount));
 
@@ -468,7 +470,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 clearinghouse.getEngineByProduct(txn.productId) ==
                     clearinghouse.getEngineByType(
                         IProductEngine.EngineType.SPOT
-                    )
+                    ),
+                ERR_INVALID_PRODUCT
             );
             validateSender(txn.sender, sender);
             clearinghouse.mintLp(txn);
