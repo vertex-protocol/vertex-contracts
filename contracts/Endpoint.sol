@@ -55,7 +55,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     Times internal times;
 
-    mapping(uint32 => int128) private sequencerFee;
+    mapping(uint32 => int128) internal sequencerFee;
 
     mapping(bytes32 => address) internal linkedSigners;
 
@@ -277,8 +277,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         string memory referralCode
     ) public {
         require(bytes(referralCode).length != 0, ERR_INVALID_REFERRAL_CODE);
-        // TODO: remove this after we support WETH on mantle.
-        require(productId != 93, ERR_INVALID_PRODUCT);
 
         address sender = address(bytes20(subaccount));
 
@@ -291,6 +289,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             sender,
             sender == msg.sender ? referralCode : DEFAULT_REFERRAL_CODE
         );
+
+        if (subaccount != X_ACCOUNT && (subaccountIds[subaccount] == 0)) {
+            clearinghouse.requireMinDeposit(productId, amount);
+        }
 
         IERC20Base token = IERC20Base(spotEngine.getToken(productId));
         require(address(token) != address(0));

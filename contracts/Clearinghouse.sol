@@ -300,9 +300,6 @@ contract Clearinghouse is
         uint128 amount,
         address sendTo
     ) external virtual onlyEndpoint {
-        // TODO: remove this after we support WETH on mantle.
-        require(productId != 93, ERR_INVALID_PRODUCT);
-
         require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
@@ -335,9 +332,6 @@ contract Clearinghouse is
         virtual
         onlyEndpoint
     {
-        // TODO: remove this after we support WETH on mantle.
-        require(txn.productId != 93, ERR_INVALID_PRODUCT);
-
         require(txn.productId != QUOTE_PRODUCT_ID);
         productToEngine[txn.productId].mintLp(
             txn.productId,
@@ -521,5 +515,26 @@ contract Clearinghouse is
     ) external onlyOwner {
         IBlastPoints(blastPoints).configurePointsOperator(gov);
         IBlast(blast).configure(YieldMode.CLAIMABLE, GasMode.CLAIMABLE, gov);
+    }
+
+    function requireMinDeposit(uint32 productId, uint128 amount) external {
+        require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        uint8 decimals = _decimals(productId);
+        require(decimals <= MAX_DECIMALS);
+
+        int256 multiplier = int256(10**(MAX_DECIMALS - decimals));
+        int128 amountRealized = int128(multiplier) * int128(amount);
+        int128 priceX18 = ONE;
+        if (productId != QUOTE_PRODUCT_ID) {
+            priceX18 = IEndpoint(getEndpoint()).getPriceX18(productId);
+        }
+
+        require(
+            priceX18.mul(amountRealized) >= MIN_DEPOSIT_AMOUNT,
+            ERR_DEPOSIT_TOO_SMALL
+        );
     }
 }
