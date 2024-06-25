@@ -81,4 +81,6 @@ interface IClearinghouse is
 
     function burnLpAndTransfer(IEndpoint.BurnLpAndTransfer calldata txn)
         external;
+
+    function requireMinDeposit(uint32 productId, uint128 amount) external;
 }
