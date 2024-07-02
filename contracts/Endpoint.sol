@@ -276,6 +276,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint128 amount,
         string memory referralCode
     ) public {
+        // TODO: remove this when we support BLAST spot.
+        require(productId != 113, ERR_INVALID_PRODUCT);
         require(bytes(referralCode).length != 0, ERR_INVALID_REFERRAL_CODE);
 
         address sender = address(bytes20(subaccount));
@@ -857,9 +859,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     function registerTransferableWallet(address wallet, bool)
         external
+        virtual
         onlyOwner
     {
-        transferableWallets[wallet] = true;
+        // comment this out because contract size exceeds limit and we don't use
+        // this function anymore.
+        // transferableWallets[wallet] = true;
     }
 
     function updateSanctions(address _sanctions) external onlyOwner {
