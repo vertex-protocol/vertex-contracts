@@ -301,7 +301,7 @@ contract OffchainExchange is
         MarketInfo memory,
         IEndpoint.SignedOrder memory signedOrder,
         bytes32 orderDigest,
-        address linkedSigner
+        address /* linkedSigner */
     ) internal view returns (bool) {
         if (signedOrder.order.sender == X_ACCOUNT) {
             return true;
@@ -873,7 +873,29 @@ contract OffchainExchange is
             addressTouched[user] = true;
             customFeeAddresses.push(user);
         }
-        feeRates[user][productId] = FeeRates(makerRateX18, takerRateX18, 1);
+        if (productId == QUOTE_PRODUCT_ID) {
+            uint32[] memory spotProductIds = spotEngine.getProductIds();
+            uint32[] memory perpProductIds = perpEngine.getProductIds();
+            for (uint32 i = 0; i < spotProductIds.length; i++) {
+                if (spotProductIds[i] == QUOTE_PRODUCT_ID) {
+                    continue;
+                }
+                feeRates[user][spotProductIds[i]] = FeeRates(
+                    makerRateX18,
+                    takerRateX18,
+                    1
+                );
+            }
+            for (uint32 i = 0; i < perpProductIds.length; i++) {
+                feeRates[user][perpProductIds[i]] = FeeRates(
+                    makerRateX18,
+                    takerRateX18,
+                    1
+                );
+            }
+        } else {
+            feeRates[user][productId] = FeeRates(makerRateX18, takerRateX18, 1);
+        }
     }
 
     function getVirtualBook(uint32 productId) external view returns (address) {

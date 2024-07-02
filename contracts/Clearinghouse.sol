@@ -519,9 +519,6 @@ contract Clearinghouse is
 
     function requireMinDeposit(uint32 productId, uint128 amount) external {
         require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
         uint8 decimals = _decimals(productId);
         require(decimals <= MAX_DECIMALS);
 

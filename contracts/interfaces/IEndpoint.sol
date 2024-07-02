@@ -22,7 +22,7 @@ interface IEndpoint is IVersion {
         BurnLp,
         SwapAMM,
         MatchOrderAMM,
-        DumpFees, // deprecated
+        DumpFees,
         ClaimSequencerFees,
         PerpTick,
         ManualAssert,
@@ -30,10 +30,11 @@ interface IEndpoint is IVersion {
         UpdateProduct,
         LinkSigner,
         UpdateFeeRates,
-        BurnLpAndTransfer, // deprecated
+        BurnLpAndTransfer,
         MatchOrdersRFQ,
         TransferQuote,
-        RebalanceXWithdraw
+        RebalanceXWithdraw,
+        UpdateMinDepositRate
     }
 
     struct UpdateProduct {
@@ -181,6 +182,11 @@ interface IEndpoint is IVersion {
         uint32 productId;
         uint128 amount;
         address sendTo;
+    }
+
+    struct UpdateMinDepositRate {
+        uint32 productId;
+        int128 minDepositRateX18;
     }
 
     struct UpdatePrice {

@@ -96,7 +96,9 @@ interface ISpotEngine is IProductEngine {
         external
         returns (int128);
 
-    function updateStates(uint128 dt, int128[] calldata utilizationRatiosX18)
+    function updateStates(uint128 dt) external;
+
+    function updateMinDepositRate(uint32 productId, int128 minDepositRateX18)
         external;
 
     function manualAssert(
