@@ -323,7 +323,14 @@ contract Clearinghouse is
             : IProductEngine.HealthType.INITIAL;
 
         require(getHealth(sender, healthType) >= 0, ERR_SUBACCT_HEALTH);
-
+        // TODO: remove this when we support BLAST spot.
+        if (productId == 113) {
+            ISpotEngine.Balance memory balance = spotEngine.getBalance(
+                productId,
+                sender
+            );
+            require(balance.amount >= 0, ERR_SUBACCT_HEALTH);
+        }
         emit ModifyCollateral(amountRealized, sender, productId);
     }
 
@@ -332,6 +339,8 @@ contract Clearinghouse is
         virtual
         onlyEndpoint
     {
+        // TODO: remove this when we support BLAST spot.
+        require(txn.productId != 113, ERR_INVALID_PRODUCT);
         require(txn.productId != QUOTE_PRODUCT_ID);
         productToEngine[txn.productId].mintLp(
             txn.productId,
