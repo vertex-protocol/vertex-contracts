@@ -568,7 +568,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             SpotTick memory txn = abi.decode(transaction[1:], (SpotTick));
             Times memory t = times;
             uint128 dt = t.spotTime == 0 ? 0 : txn.time - t.spotTime;
-            spotEngine.updateStates(dt, txn.utilizationRatiosX18);
+            spotEngine.updateStates(dt);
             t.spotTime = txn.time;
             times = t;
         } else if (txType == TransactionType.PerpTick) {
@@ -741,6 +741,16 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 txn.amount,
                 txn.sendTo
             );
+        } else if (txType == TransactionType.UpdateMinDepositRate) {
+            UpdateMinDepositRate memory txn = abi.decode(
+                transaction[1:],
+                (UpdateMinDepositRate)
+            );
+
+            spotEngine.updateMinDepositRate(
+                txn.productId,
+                txn.minDepositRateX18
+            );
         } else {
             revert();
         }
@@ -845,7 +855,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         return nonces[sender];
     }
 
-    function registerTransferableWallet(address wallet, bool _transferable)
+    function registerTransferableWallet(address wallet, bool)
         external
         onlyOwner
     {

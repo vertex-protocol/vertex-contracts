@@ -116,7 +116,9 @@ library RiskHelper {
     // of the default frontend cross margin account:
     // |default| 0 0 0 0 0|
 
-    function isoGroup(bytes32 subaccount) internal pure returns (uint32) {
+    function isoGroup(
+        bytes32 /* subaccount */
+    ) internal pure returns (uint32) {
         // uint256 s = uint256(subaccount);
         // int.from_bytes(b'iso', byteorder='big')
         // if (uint24(s) == 6910831) {
