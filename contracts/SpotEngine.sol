@@ -11,9 +11,8 @@ import "./libraries/RiskHelper.sol";
 import "./BaseEngine.sol";
 import "./SpotEngineState.sol";
 import "./SpotEngineLP.sol";
-import "./Version.sol";
 
-contract SpotEngine is SpotEngineLP, Version {
+contract SpotEngine is SpotEngineLP {
     using MathSD21x18 for int128;
 
     function initialize(

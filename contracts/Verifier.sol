@@ -4,12 +4,11 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "./Version.sol";
 import "./common/Errors.sol";
 import "./libraries/MathHelper.sol";
 import "./interfaces/IVerifier.sol";
 
-contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier, Version {
+contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
     Point[8] internal pubkeys;
     Point[256] internal aggregatePubkey;
     bool[256] internal isAggregatePubkeyLatest;
@@ -230,7 +229,7 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier, Version {
         bytes32 digest,
         bytes memory signature,
         uint8 signerIndex
-    ) public returns (bool) {
+    ) public view returns (bool) {
         address expectedAddress = getPubkeyAddress(signerIndex);
         address recovered = ECDSA.recover(digest, signature);
         return expectedAddress == recovered;
@@ -241,11 +240,11 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier, Version {
         uint64 idx,
         bytes[] calldata signatures
     ) public {
-        bytes32 msg = keccak256(
+        bytes32 data = keccak256(
             abi.encodePacked(uint256(block.chainid), uint256(idx), txn)
         );
         bytes32 hashedMsg = keccak256(
-            abi.encodePacked("\x19Ethereum Signed Message:\n32", msg)
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", data)
         );
 
         uint256 nSignatures = 0;

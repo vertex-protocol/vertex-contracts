@@ -439,7 +439,11 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         }
     }
 
-    function getMinDepositRate(uint32 productId) external returns (int128) {
+    function getMinDepositRate(uint32 productId)
+        external
+        view
+        returns (int128)
+    {
         return minDepositRatesX18[productId];
     }
 }

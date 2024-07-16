@@ -12,9 +12,8 @@ import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
 import "./BaseEngine.sol";
 import "./PerpEngineLp.sol";
-import "./Version.sol";
 
-contract PerpEngine is PerpEngineLp, Version {
+contract PerpEngine is PerpEngineLp {
     using MathSD21x18 for int128;
 
     function initialize(

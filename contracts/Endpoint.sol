@@ -16,13 +16,12 @@ import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 import "./interfaces/IERC20Base.sol";
 import "./interfaces/IVerifier.sol";
-import "./Version.sol";
 
 interface ISanctionsList {
     function isSanctioned(address addr) external view returns (bool);
 }
 
-contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
+contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     using ERC20Helper for IERC20Base;
 
     IERC20Base private quote; // deprecated
@@ -460,14 +459,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 address(0)
             );
         } else if (txType == TransactionType.SettlePnl) {
-            SettlePnl memory txn = abi.decode(transaction[1:], (SettlePnl));
-            clearinghouse.settlePnl(txn);
+            clearinghouse.settlePnl(transaction);
         } else if (txType == TransactionType.DepositInsurance) {
-            DepositInsurance memory txn = abi.decode(
-                transaction[1:],
-                (DepositInsurance)
-            );
-            clearinghouse.depositInsurance(txn);
+            clearinghouse.depositInsurance(transaction);
         } else if (txType == TransactionType.MintLp) {
             MintLp memory txn = abi.decode(transaction[1:], (MintLp));
             require(
@@ -584,8 +578,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             UpdatePrice memory txn = abi.decode(transaction[1:], (UpdatePrice));
             _updatePrice(txn.productId, txn.priceX18);
         } else if (txType == TransactionType.SettlePnl) {
-            SettlePnl memory txn = abi.decode(transaction[1:], (SettlePnl));
-            clearinghouse.settlePnl(txn);
+            clearinghouse.settlePnl(transaction);
         } else if (
             txType == TransactionType.MatchOrders ||
             txType == TransactionType.MatchOrdersRFQ
@@ -671,12 +664,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             requireSubaccount(txn.subaccount);
             clearinghouse.claimSequencerFees(txn, fees);
         } else if (txType == TransactionType.ManualAssert) {
-            ManualAssert memory txn = abi.decode(
-                transaction[1:],
-                (ManualAssert)
-            );
-            perpEngine.manualAssert(txn.openInterests);
-            spotEngine.manualAssert(txn.totalDeposits, txn.totalBorrows);
+            clearinghouse.manualAssert(transaction);
         } else if (txType == TransactionType.LinkSigner) {
             SignedLinkSigner memory signedTx = abi.decode(
                 transaction[1:],
@@ -753,6 +741,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 txn.productId,
                 txn.minDepositRateX18
             );
+        } else if (txType == TransactionType.AssertCode) {
+            clearinghouse.assertCode(transaction);
         } else {
             revert();
         }
@@ -855,16 +845,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
 
     function getNonce(address sender) external view returns (uint64) {
         return nonces[sender];
-    }
-
-    function registerTransferableWallet(address wallet, bool)
-        external
-        virtual
-        onlyOwner
-    {
-        // comment this out because contract size exceeds limit and we don't use
-        // this function anymore.
-        // transferableWallets[wallet] = true;
     }
 
     function updateSanctions(address _sanctions) external onlyOwner {

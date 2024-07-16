@@ -16,10 +16,11 @@ import "./interfaces/engine/IPerpEngine.sol";
 import "./EndpointGated.sol";
 import "./interfaces/IEndpoint.sol";
 import "./ClearinghouseStorage.sol";
-import "./Version.sol";
 
 interface IProxyManager {
     function getProxyManagerHelper() external view returns (address);
+
+    function getCodeHash(string memory name) external view returns (bytes32);
 }
 
 enum YieldMode {
@@ -45,12 +46,7 @@ interface IBlast {
     ) external;
 }
 
-contract Clearinghouse is
-    EndpointGated,
-    ClearinghouseStorage,
-    IClearinghouse,
-    Version
-{
+contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     using MathSD21x18 for int128;
     using ERC20Helper for IERC20Base;
 
@@ -268,12 +264,15 @@ contract Clearinghouse is
         require(_isAboveInitial(txn.sender), ERR_SUBACCT_HEALTH);
     }
 
-    /// @notice control insurance balance, only callable by owner
-    function depositInsurance(IEndpoint.DepositInsurance calldata txn)
+    function depositInsurance(bytes calldata transaction)
         external
         virtual
         onlyEndpoint
     {
+        IEndpoint.DepositInsurance memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.DepositInsurance)
+        );
         require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         int256 multiplier = int256(
             10**(MAX_DECIMALS - _decimals(QUOTE_PRODUCT_ID))
@@ -452,7 +451,11 @@ contract Clearinghouse is
             .updateBalance(QUOTE_PRODUCT_ID, subaccount, amountSettled);
     }
 
-    function settlePnl(IEndpoint.SettlePnl calldata txn) external onlyEndpoint {
+    function settlePnl(bytes calldata transaction) external onlyEndpoint {
+        IEndpoint.SettlePnl memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.SettlePnl)
+        );
         for (uint128 i = 0; i < txn.subaccounts.length; ++i) {
             _settlePnl(txn.subaccounts[i], txn.productIds[i]);
         }
@@ -496,14 +499,18 @@ contract Clearinghouse is
         address value;
     }
 
-    function upgradeClearinghouseLiq(address _clearinghouseLiq) external {
+    function _getProxyManager() internal view returns (address) {
         AddressSlot storage proxyAdmin;
         assembly {
             proxyAdmin.slot := 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103
         }
+        return proxyAdmin.value;
+    }
+
+    function upgradeClearinghouseLiq(address _clearinghouseLiq) external {
         require(
             msg.sender ==
-                IProxyManager(proxyAdmin.value).getProxyManagerHelper(),
+                IProxyManager(_getProxyManager()).getProxyManagerHelper(),
             ERR_UNAUTHORIZED
         );
         clearinghouseLiq = _clearinghouseLiq;
@@ -542,5 +549,45 @@ contract Clearinghouse is
             priceX18.mul(amountRealized) >= MIN_DEPOSIT_AMOUNT,
             ERR_DEPOSIT_TOO_SMALL
         );
+    }
+
+    function assertCode(bytes calldata transaction) external view virtual {
+        IEndpoint.AssertCode memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.AssertCode)
+        );
+        require(
+            txn.contractNames.length == txn.codeHashes.length,
+            ERR_CODE_NOT_MATCH
+        );
+        for (uint256 i = 0; i < txn.contractNames.length; i++) {
+            bytes32 expectedCodeHash = IProxyManager(_getProxyManager())
+                .getCodeHash(txn.contractNames[i]);
+            require(txn.codeHashes[i] == expectedCodeHash, ERR_CODE_NOT_MATCH);
+        }
+    }
+
+    function manualAssert(bytes calldata transaction) external view virtual {
+        IEndpoint.ManualAssert memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.ManualAssert)
+        );
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        IPerpEngine perpEngine = IPerpEngine(
+            address(engineByType[IProductEngine.EngineType.PERP])
+        );
+        perpEngine.manualAssert(txn.openInterests);
+        spotEngine.manualAssert(txn.totalDeposits, txn.totalBorrows);
+    }
+
+    function getWithdrawPool() external view returns (address) {
+        return withdrawPool;
+    }
+
+    function setWithdrawPool(address _withdrawPool) external onlyOwner {
+        require(_withdrawPool != address(0));
+        withdrawPool = _withdrawPool;
     }
 }

@@ -2,9 +2,8 @@
 pragma solidity ^0.8.0;
 
 import "./clearinghouse/IClearinghouse.sol";
-import "./IVersion.sol";
 
-interface IEndpoint is IVersion {
+interface IEndpoint {
     event SubmitTransactions();
 
     // events that we parse transactions into
@@ -34,7 +33,8 @@ interface IEndpoint is IVersion {
         MatchOrdersRFQ,
         TransferQuote,
         RebalanceXWithdraw,
-        UpdateMinDepositRate
+        UpdateMinDepositRate,
+        AssertCode
     }
 
     struct UpdateProduct {
@@ -157,6 +157,11 @@ interface IEndpoint is IVersion {
         int128[] openInterests;
         int128[] totalDeposits;
         int128[] totalBorrows;
+    }
+
+    struct AssertCode {
+        string[] contractNames;
+        bytes32[] codeHashes;
     }
 
     struct Rebate {
