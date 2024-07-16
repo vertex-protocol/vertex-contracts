@@ -18,13 +18,11 @@ import "./interfaces/engine/IPerpEngine.sol";
 import "./EndpointGated.sol";
 import "./interfaces/IEndpoint.sol";
 import "./ClearinghouseStorage.sol";
-import "./Version.sol";
 
 contract ClearinghouseLiq is
     EndpointGated,
     ClearinghouseStorage,
-    IClearinghouseLiq,
-    Version
+    IClearinghouseLiq
 {
     using MathSD21x18 for int128;
 
