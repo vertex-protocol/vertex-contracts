@@ -49,6 +49,8 @@ abstract contract ClearinghouseStorage {
 
     uint256 internal spreads;
 
+    address internal withdrawPool;
+
     function getLiqPriceX18(uint32 productId, int128 amount)
         internal
         view

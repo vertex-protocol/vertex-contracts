@@ -2,9 +2,8 @@
 pragma solidity ^0.8.0;
 
 import "./clearinghouse/IClearinghouse.sol";
-import "./IVersion.sol";
 
-interface IOffchainExchange is IVersion {
+interface IOffchainExchange {
     event FillOrder(
         uint32 indexed productId,
         // original order information

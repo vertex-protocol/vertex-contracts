@@ -12,15 +12,13 @@ import "./libraries/Logger.sol";
 import "./interfaces/IOffchainExchange.sol";
 import "./EndpointGated.sol";
 import "./common/Errors.sol";
-import "./Version.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 
 contract OffchainExchange is
     IOffchainExchange,
     EndpointGated,
-    EIP712Upgradeable,
-    Version
+    EIP712Upgradeable
 {
     using MathSD21x18 for int128;
     IClearinghouse internal clearinghouse;

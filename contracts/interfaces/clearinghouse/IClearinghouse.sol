@@ -5,14 +5,9 @@ import "./IClearinghouseEventEmitter.sol";
 import "../engine/IProductEngine.sol";
 import "../IEndpoint.sol";
 import "../IEndpointGated.sol";
-import "../IVersion.sol";
 import "../../libraries/RiskHelper.sol";
 
-interface IClearinghouse is
-    IClearinghouseEventEmitter,
-    IEndpointGated,
-    IVersion
-{
+interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
     function addEngine(
         address engine,
         address offchainExchange,
@@ -40,9 +35,9 @@ interface IClearinghouse is
     function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata tx)
         external;
 
-    function depositInsurance(IEndpoint.DepositInsurance calldata tx) external;
+    function depositInsurance(bytes calldata transaction) external;
 
-    function settlePnl(IEndpoint.SettlePnl calldata tx) external;
+    function settlePnl(bytes calldata transaction) external;
 
     function claimSequencerFees(
         IEndpoint.ClaimSequencerFees calldata tx,
@@ -83,4 +78,12 @@ interface IClearinghouse is
         external;
 
     function requireMinDeposit(uint32 productId, uint128 amount) external;
+
+    function assertCode(bytes calldata tx) external;
+
+    function manualAssert(bytes calldata tx) external;
+
+    function getWithdrawPool() external view returns (address);
+
+    function setWithdrawPool(address _withdrawPool) external;
 }
