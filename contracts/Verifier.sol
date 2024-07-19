@@ -14,11 +14,10 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
     bool[256] internal isAggregatePubkeyLatest;
     uint256 internal nSigner;
 
-    /*
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
-    */
 
     function initialize(Point[8] memory initialSet) external initializer {
         __Ownable_init();
