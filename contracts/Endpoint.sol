@@ -275,8 +275,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         uint128 amount,
         string memory referralCode
     ) public {
-        // TODO: remove this when we support BLAST spot.
-        require(productId != 113, ERR_INVALID_PRODUCT);
         require(bytes(referralCode).length != 0, ERR_INVALID_REFERRAL_CODE);
 
         address sender = address(bytes20(subaccount));
@@ -456,7 +454,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 txn.sender,
                 txn.productId,
                 txn.amount,
-                address(0)
+                address(0),
+                nSubmissions
             );
         } else if (txType == TransactionType.SettlePnl) {
             clearinghouse.settlePnl(transaction);
@@ -558,7 +557,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 signedTx.tx.sender,
                 signedTx.tx.productId,
                 signedTx.tx.amount,
-                address(0)
+                address(0),
+                nSubmissions
             );
         } else if (txType == TransactionType.SpotTick) {
             SpotTick memory txn = abi.decode(transaction[1:], (SpotTick));
@@ -729,7 +729,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 X_ACCOUNT,
                 txn.productId,
                 txn.amount,
-                txn.sendTo
+                txn.sendTo,
+                nSubmissions
             );
         } else if (txType == TransactionType.UpdateMinDepositRate) {
             UpdateMinDepositRate memory txn = abi.decode(
@@ -769,8 +770,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         for (uint256 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];
             processTransaction(transaction);
+            nSubmissions += 1;
         }
-        nSubmissions += uint64(transactions.length);
     }
 
     function submitTransactionsCheckedWithGasLimit(

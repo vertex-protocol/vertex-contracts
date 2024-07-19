@@ -25,7 +25,8 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
         bytes32 sender,
         uint32 productId,
         uint128 amount,
-        address sendTo
+        address sendTo,
+        uint64 idx
     ) external;
 
     function mintLp(IEndpoint.MintLp calldata tx) external;

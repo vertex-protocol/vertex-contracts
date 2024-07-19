@@ -20,6 +20,8 @@ int128 constant TAKER_SEQUENCER_FEE = 0; // $0.00
 
 int128 constant SLOW_MODE_FEE = 1000000; // $1
 
+int128 constant FAST_WITHDRAWAL_FEE_RATE = 1_000_000_000_000_000; // 0.1%
+
 int128 constant LIQUIDATION_FEE = 1e18; // $1
 int128 constant HEALTHCHECK_FEE = 1e18; // $1
 
