@@ -313,6 +313,8 @@ contract SpotEngine is SpotEngineLP {
                 state.cumulativeDepositsMultiplierX18 = (totalDeposited +
                     balance.amount).div(state.totalDepositsNormalized);
 
+                require(state.cumulativeDepositsMultiplierX18 > 0);
+
                 state.totalBorrowsNormalized += balance.amount.div(
                     state.cumulativeBorrowsMultiplierX18
                 );

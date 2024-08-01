@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol";
+import "./libraries/MathHelper.sol";
 import "./interfaces/IEndpoint.sol";
 import "./Verifier.sol";
 import "./interfaces/engine/ISpotEngine.sol";
@@ -38,12 +39,15 @@ contract WithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
     // collected withdrawal fees in native token decimals
     mapping(uint32 => int128) public fees;
 
+    uint64 public minIdx;
+
     function submitFastWithdrawal(
         uint64 idx,
         bytes calldata transaction,
         bytes[] calldata signatures
     ) public {
         require(!markedIdxs[idx], "Withdrawal already submitted");
+        require(idx > minIdx, "idx too small");
         markedIdxs[idx] = true;
 
         Verifier v = Verifier(verifier);
@@ -86,6 +90,8 @@ contract WithdrawPool is EIP712Upgradeable, OwnableUpgradeable {
             return;
         }
         markedIdxs[idx] = true;
+        // set minIdx to most recent withdrawal submitted by sequencer
+        minIdx = idx;
 
         handleWithdrawTransfer(token, sendTo, amount);
     }
