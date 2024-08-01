@@ -253,8 +253,10 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         require(virtualBook != address(0));
         require(
             riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
+                riskStore.longWeightMaintenance <= 10**9 &&
                 riskStore.shortWeightInitial >=
-                riskStore.shortWeightMaintenance,
+                riskStore.shortWeightMaintenance &&
+                riskStore.shortWeightMaintenance >= 10**9,
             ERR_BAD_PRODUCT_CONFIG
         );
 

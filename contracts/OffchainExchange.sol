@@ -736,6 +736,8 @@ contract OffchainExchange is
         MarketInfo memory market = getMarketInfo(txn.productId);
         CallState memory callState = _getCallState(txn.productId);
 
+        require(txn.priceX18 > 0, ERR_INVALID_PRICE);
+
         if (callState.isPerp) {
             require(
                 txn.amount % market.sizeIncrement == 0,

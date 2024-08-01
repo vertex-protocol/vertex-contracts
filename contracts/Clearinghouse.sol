@@ -586,31 +586,4 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         require(_withdrawPool != address(0));
         withdrawPool = _withdrawPool;
     }
-
-    // todo: remove after claim
-    function claimBlastNativeYield() external {
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IERC20Base usdb = IERC20Base(spotEngine.getConfig(0).token);
-
-        if (block.chainid == 81457) {
-            require(msg.sender == 0x0030d7e1922Ff2227a77B04b075bdEa763D3551a);
-            IERC20Base eth = IERC20Base(spotEngine.getConfig(91).token);
-            // 60.74
-            eth.safeTransfer(msg.sender, 60_740_000_000_000_000_000);
-            // 171,660.46
-            usdb.safeTransfer(msg.sender, 171_660_460_000_000_000_000_000);
-        } else if (block.chainid == 168587773) {
-            // deployer
-            require(msg.sender == 0x3c06e307BA6Ab81E8Ff6661c1559ce8027744AE5);
-            IERC20Base eth = IERC20Base(spotEngine.getConfig(3).token);
-            // 1.00
-            eth.safeTransfer(msg.sender, 1_000_000_000_000_000_000);
-            // 1,000
-            usdb.safeTransfer(msg.sender, 1_000_000_000);
-        } else {
-            revert("invalid chain_id");
-        }
-    }
 }
