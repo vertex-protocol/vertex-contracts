@@ -210,17 +210,8 @@ contract SpotEngine is SpotEngineLP {
             subaccount
         ].balance;
 
-        if (subaccount == X_ACCOUNT && migrationFlag == 0) {
-            _updateBalanceNormalizedNoTotals(state, balance, amountDelta);
-            _updateBalanceNormalizedNoTotals(
-                quoteState,
-                quoteBalance,
-                quoteDelta
-            );
-        } else {
-            _updateBalanceNormalized(state, balance, amountDelta);
-            _updateBalanceNormalized(quoteState, quoteBalance, quoteDelta);
-        }
+        _updateBalanceNormalized(state, balance, amountDelta);
+        _updateBalanceNormalized(quoteState, quoteBalance, quoteDelta);
 
         balances[productId][subaccount].balance = balance;
         balances[QUOTE_PRODUCT_ID][subaccount].balance = quoteBalance;
@@ -251,11 +242,7 @@ contract SpotEngine is SpotEngineLP {
 
         BalanceNormalized memory balance = balances[productId][subaccount]
             .balance;
-        if (subaccount == X_ACCOUNT && migrationFlag == 0) {
-            _updateBalanceNormalizedNoTotals(state, balance, amountDelta);
-        } else {
-            _updateBalanceNormalized(state, balance, amountDelta);
-        }
+        _updateBalanceNormalized(state, balance, amountDelta);
         balances[productId][subaccount].balance = balance;
 
         //        if (productId == QUOTE_PRODUCT_ID) {
@@ -273,19 +260,13 @@ contract SpotEngine is SpotEngineLP {
     // (i.e. if a user transfers tokens to the clearinghouse
     // without going through the standard deposit)
     function assertUtilization(uint32 productId) external view {
-        (State memory _state, Balance memory _balance) = getStateAndBalance(
-            productId,
-            X_ACCOUNT
-        );
+        (State memory _state, ) = getStateAndBalance(productId, X_ACCOUNT);
         int128 totalDeposits = _state.totalDepositsNormalized.mul(
             _state.cumulativeDepositsMultiplierX18
         );
         int128 totalBorrows = _state.totalBorrowsNormalized.mul(
             _state.cumulativeBorrowsMultiplierX18
         );
-        if (_balance.amount < 0 && migrationFlag == 0) {
-            totalDeposits += _balance.amount;
-        }
         require(totalDeposits >= totalBorrows, ERR_MAX_UTILIZATION);
     }
 
