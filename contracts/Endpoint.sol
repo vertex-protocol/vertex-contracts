@@ -714,7 +714,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 )
             );
 
-            requireSubaccount(signedTx.tx.recipient);
+            _recordSubaccount(signedTx.tx.recipient);
             validateSignature(signedTx.tx.sender, digest, signedTx.signature);
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
