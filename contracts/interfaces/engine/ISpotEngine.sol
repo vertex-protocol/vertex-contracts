@@ -5,6 +5,14 @@ import "./IProductEngine.sol";
 import "../../libraries/RiskHelper.sol";
 
 interface ISpotEngine is IProductEngine {
+    event InterestPayment(
+        uint32 productId,
+        uint128 dt,
+        int128 depositRateMultiplierX18,
+        int128 borrowRateMultiplierX18,
+        int128 feeAmount
+    );
+
     struct Config {
         address token;
         int128 interestInflectionUtilX18;

@@ -229,9 +229,11 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             .cumulativeBorrowsMultiplierX18
             .mul(borrowRateMultiplierX18);
 
+        int128 depositRateMultiplierX18 = ONE + realizedDepositRateX18;
+
         state.cumulativeDepositsMultiplierX18 = state
             .cumulativeDepositsMultiplierX18
-            .mul(ONE + realizedDepositRateX18);
+            .mul(depositRateMultiplierX18);
 
         if (feesAmt != 0) {
             BalanceNormalized memory feesAccBalance = balances[productId][
@@ -256,7 +258,22 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             state.cumulativeDepositsMultiplierX18 = state
                 .cumulativeDepositsMultiplierX18
                 .mul(minDepositRateMultiplierX18);
+
+            depositRateMultiplierX18 = depositRateMultiplierX18.mul(
+                minDepositRateMultiplierX18
+            );
+            borrowRateMultiplierX18 = borrowRateMultiplierX18.mul(
+                minDepositRateMultiplierX18
+            );
         }
+
+        emit InterestPayment(
+            productId,
+            dt,
+            depositRateMultiplierX18,
+            borrowRateMultiplierX18,
+            feesAmt
+        );
     }
 
     //

@@ -176,6 +176,13 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
                 int128 paymentAmount = priceDiffX18.mul(dtX18).div(ONE_DAY_X18);
                 state.cumulativeFundingLongX18 += paymentAmount;
                 state.cumulativeFundingShortX18 += paymentAmount;
+
+                emit FundingPayment(
+                    productId,
+                    dt,
+                    state.openInterest,
+                    paymentAmount
+                );
             }
 
             {
