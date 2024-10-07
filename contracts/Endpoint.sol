@@ -353,6 +353,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 address(uint160(bytes20(txn.recipient))),
                 DEFAULT_REFERRAL_CODE
             );
+        } else if (txType == TransactionType.WithdrawInsurance) {
+            require(sender == owner());
         } else {
             IERC20Base token = _getQuote();
             safeTransferFrom(token, sender, uint256(int256(SLOW_MODE_FEE)));
@@ -500,6 +502,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             validateSender(txn.sender, sender);
             _recordSubaccount(txn.recipient);
             clearinghouse.burnLpAndTransfer(txn);
+        } else if (txType == TransactionType.WithdrawInsurance) {
+            clearinghouse.withdrawInsurance(transaction, nSubmissions);
         } else {
             revert();
         }
