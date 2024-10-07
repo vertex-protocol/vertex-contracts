@@ -38,6 +38,8 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
 
     function depositInsurance(bytes calldata transaction) external;
 
+    function withdrawInsurance(bytes calldata transaction, uint64 idx) external;
+
     function settlePnl(bytes calldata transaction) external;
 
     function claimSequencerFees(
