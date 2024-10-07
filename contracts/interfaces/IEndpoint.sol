@@ -34,7 +34,8 @@ interface IEndpoint {
         TransferQuote,
         RebalanceXWithdraw,
         UpdateMinDepositRate,
-        AssertCode
+        AssertCode,
+        WithdrawInsurance
     }
 
     struct UpdateProduct {
@@ -162,6 +163,11 @@ interface IEndpoint {
     struct AssertCode {
         string[] contractNames;
         bytes32[] codeHashes;
+    }
+
+    struct WithdrawInsurance {
+        uint128 amount;
+        address sendTo;
     }
 
     struct Rebate {

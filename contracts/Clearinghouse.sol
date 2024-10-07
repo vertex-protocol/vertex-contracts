@@ -284,6 +284,33 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         insurance += amount;
     }
 
+    function withdrawInsurance(bytes calldata transaction, uint64 idx)
+        external
+        virtual
+        onlyEndpoint
+    {
+        IEndpoint.WithdrawInsurance memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.WithdrawInsurance)
+        );
+        require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
+        int256 multiplier = int256(
+            10**(MAX_DECIMALS - _decimals(QUOTE_PRODUCT_ID))
+        );
+        int128 amount = int128(txn.amount) * int128(multiplier);
+        require(amount <= insurance, ERR_NO_INSURANCE);
+        insurance -= amount;
+
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        IERC20Base token = IERC20Base(
+            spotEngine.getConfig(QUOTE_PRODUCT_ID).token
+        );
+        require(address(token) != address(0));
+        handleWithdrawTransfer(token, txn.sendTo, txn.amount, idx);
+    }
+
     function handleWithdrawTransfer(
         IERC20Base token,
         address to,
