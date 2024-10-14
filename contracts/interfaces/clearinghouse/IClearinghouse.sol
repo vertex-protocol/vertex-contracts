@@ -88,5 +88,7 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
 
     function getWithdrawPool() external view returns (address);
 
+    function getSlowModeFee() external view returns (uint256);
+
     function setWithdrawPool(address _withdrawPool) external;
 }

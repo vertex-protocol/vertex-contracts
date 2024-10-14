@@ -613,4 +613,15 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         require(_withdrawPool != address(0));
         withdrawPool = _withdrawPool;
     }
+
+    function getSlowModeFee() external view returns (uint256) {
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        IERC20Base token = IERC20Base(
+            spotEngine.getConfig(QUOTE_PRODUCT_ID).token
+        );
+        int256 multiplier = int256(10**(token.decimals() - 6));
+        return uint256(int256(SLOW_MODE_FEE) * multiplier);
+    }
 }
