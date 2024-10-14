@@ -164,6 +164,18 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         sequencerFee[productId] += fee;
     }
 
+    function chargeSlowModeFee(IERC20Base token, address from)
+        internal
+        virtual
+    {
+        require(address(token) != address(0));
+        token.safeTransferFrom(
+            from,
+            address(this),
+            clearinghouse.getSlowModeFee()
+        );
+    }
+
     function getLinkedSigner(bytes32 subaccount)
         public
         view
@@ -193,14 +205,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         );
     }
 
-    function increaseAllowance(
-        IERC20Base token,
-        address to,
-        uint256 amount
-    ) internal virtual {
-        token.increaseAllowance(to, amount);
-    }
-
     function safeTransferFrom(
         IERC20Base token,
         address from,
@@ -222,6 +226,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         address from,
         uint256 amount
     ) internal {
+        require(address(token) != address(0));
         safeTransferFrom(token, from, amount);
         safeTransferTo(token, address(clearinghouse), amount);
     }
@@ -293,16 +298,16 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             clearinghouse.requireMinDeposit(productId, amount);
         }
 
-        IERC20Base token = IERC20Base(spotEngine.getToken(productId));
-        require(address(token) != address(0));
-        handleDepositTransfer(token, msg.sender, uint256(amount));
+        handleDepositTransfer(
+            IERC20Base(spotEngine.getToken(productId)),
+            msg.sender,
+            uint256(amount)
+        );
         // copy from submitSlowModeTransaction
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
 
-        // hardcoded to three days
-        uint64 executableAt = uint64(block.timestamp) + 259200;
         slowModeTxs[_slowModeConfig.txCount++] = SlowModeTx({
-            executableAt: executableAt,
+            executableAt: uint64(block.timestamp) + 259200, // hardcoded to three days
             sender: sender,
             tx: abi.encodePacked(
                 uint8(TransactionType.DepositCollateral),
@@ -338,9 +343,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (DepositInsurance)
             );
-            IERC20Base token = _getQuote();
-            require(address(token) != address(0));
-            handleDepositTransfer(token, sender, uint256(txn.amount));
+            handleDepositTransfer(_getQuote(), sender, uint256(txn.amount));
         } else if (txType == TransactionType.UpdateProduct) {
             require(sender == owner());
         } else if (txType == TransactionType.BurnLpAndTransfer) {
@@ -356,17 +359,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         } else if (txType == TransactionType.WithdrawInsurance) {
             require(sender == owner());
         } else {
-            IERC20Base token = _getQuote();
-            safeTransferFrom(token, sender, uint256(int256(SLOW_MODE_FEE)));
+            chargeSlowModeFee(_getQuote(), sender);
             slowModeFees += SLOW_MODE_FEE;
         }
 
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
-        // hardcoded to three days
-        uint64 executableAt = uint64(block.timestamp) + 259200;
         requireUnsanctioned(sender);
         slowModeTxs[_slowModeConfig.txCount++] = SlowModeTx({
-            executableAt: executableAt,
+            executableAt: uint64(block.timestamp) + 259200, // hardcoded to three days
             sender: sender,
             tx: transaction
         });
@@ -517,20 +517,23 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (SignedLiquidateSubaccount)
             );
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            bytes32 digest = _hashTypedDataV4(
-                keccak256(
-                    abi.encode(
-                        keccak256(bytes(LIQUIDATE_SUBACCOUNT_SIGNATURE)),
-                        signedTx.tx.sender,
-                        signedTx.tx.liquidatee,
-                        signedTx.tx.productId,
-                        signedTx.tx.isEncodedSpread,
-                        signedTx.tx.amount,
-                        signedTx.tx.nonce
+            validateSignature(
+                signedTx.tx.sender,
+                _hashTypedDataV4(
+                    keccak256(
+                        abi.encode(
+                            keccak256(bytes(LIQUIDATE_SUBACCOUNT_SIGNATURE)),
+                            signedTx.tx.sender,
+                            signedTx.tx.liquidatee,
+                            signedTx.tx.productId,
+                            signedTx.tx.isEncodedSpread,
+                            signedTx.tx.amount,
+                            signedTx.tx.nonce
+                        )
                     )
-                )
+                ),
+                signedTx.signature
             );
-            validateSignature(signedTx.tx.sender, digest, signedTx.signature);
             requireSubaccount(signedTx.tx.sender);
             chargeFee(signedTx.tx.sender, LIQUIDATION_FEE);
             clearinghouse.liquidateSubaccount(signedTx.tx);
@@ -540,18 +543,21 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (SignedWithdrawCollateral)
             );
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            bytes32 digest = _hashTypedDataV4(
-                keccak256(
-                    abi.encode(
-                        keccak256(bytes(WITHDRAW_COLLATERAL_SIGNATURE)),
-                        signedTx.tx.sender,
-                        signedTx.tx.productId,
-                        signedTx.tx.amount,
-                        signedTx.tx.nonce
+            validateSignature(
+                signedTx.tx.sender,
+                _hashTypedDataV4(
+                    keccak256(
+                        abi.encode(
+                            keccak256(bytes(WITHDRAW_COLLATERAL_SIGNATURE)),
+                            signedTx.tx.sender,
+                            signedTx.tx.productId,
+                            signedTx.tx.amount,
+                            signedTx.tx.nonce
+                        )
                     )
-                )
+                ),
+                signedTx.signature
             );
-            validateSignature(signedTx.tx.sender, digest, signedTx.signature);
             chargeFee(
                 signedTx.tx.sender,
                 spotEngine.getWithdrawFee(signedTx.tx.productId),
@@ -616,20 +622,23 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (SignedMintLp)
             );
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            bytes32 digest = _hashTypedDataV4(
-                keccak256(
-                    abi.encode(
-                        keccak256(bytes(MINT_LP_SIGNATURE)),
-                        signedTx.tx.sender,
-                        signedTx.tx.productId,
-                        signedTx.tx.amountBase,
-                        signedTx.tx.quoteAmountLow,
-                        signedTx.tx.quoteAmountHigh,
-                        signedTx.tx.nonce
+            validateSignature(
+                signedTx.tx.sender,
+                _hashTypedDataV4(
+                    keccak256(
+                        abi.encode(
+                            keccak256(bytes(MINT_LP_SIGNATURE)),
+                            signedTx.tx.sender,
+                            signedTx.tx.productId,
+                            signedTx.tx.amountBase,
+                            signedTx.tx.quoteAmountLow,
+                            signedTx.tx.quoteAmountHigh,
+                            signedTx.tx.nonce
+                        )
                     )
-                )
+                ),
+                signedTx.signature
             );
-            validateSignature(signedTx.tx.sender, digest, signedTx.signature);
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
             clearinghouse.mintLp(signedTx.tx);
         } else if (txType == TransactionType.BurnLp) {
@@ -638,18 +647,21 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (SignedBurnLp)
             );
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            bytes32 digest = _hashTypedDataV4(
-                keccak256(
-                    abi.encode(
-                        keccak256(bytes(BURN_LP_SIGNATURE)),
-                        signedTx.tx.sender,
-                        signedTx.tx.productId,
-                        signedTx.tx.amount,
-                        signedTx.tx.nonce
+            validateSignature(
+                signedTx.tx.sender,
+                _hashTypedDataV4(
+                    keccak256(
+                        abi.encode(
+                            keccak256(bytes(BURN_LP_SIGNATURE)),
+                            signedTx.tx.sender,
+                            signedTx.tx.productId,
+                            signedTx.tx.amount,
+                            signedTx.tx.nonce
+                        )
                     )
-                )
+                ),
+                signedTx.signature
             );
-            validateSignature(signedTx.tx.sender, digest, signedTx.signature);
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
             clearinghouse.burnLp(signedTx.tx);
         } else if (txType == TransactionType.DumpFees) {
@@ -675,17 +687,20 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (SignedLinkSigner)
             );
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            bytes32 digest = _hashTypedDataV4(
-                keccak256(
-                    abi.encode(
-                        keccak256(bytes(LINK_SIGNER_SIGNATURE)),
-                        signedTx.tx.sender,
-                        signedTx.tx.signer,
-                        signedTx.tx.nonce
+            validateSignature(
+                signedTx.tx.sender,
+                _hashTypedDataV4(
+                    keccak256(
+                        abi.encode(
+                            keccak256(bytes(LINK_SIGNER_SIGNATURE)),
+                            signedTx.tx.sender,
+                            signedTx.tx.signer,
+                            signedTx.tx.nonce
+                        )
                     )
-                )
+                ),
+                signedTx.signature
             );
-            validateSignature(signedTx.tx.sender, digest, signedTx.signature);
             linkedSigners[signedTx.tx.sender] = address(
                 uint160(bytes20(signedTx.tx.signer))
             );
@@ -705,21 +720,22 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (SignedTransferQuote)
             );
-
-            bytes32 digest = _hashTypedDataV4(
-                keccak256(
-                    abi.encode(
-                        keccak256(bytes(TRANSFER_QUOTE_SIGNATURE)),
-                        signedTx.tx.sender,
-                        signedTx.tx.recipient,
-                        signedTx.tx.amount,
-                        signedTx.tx.nonce
-                    )
-                )
-            );
-
             _recordSubaccount(signedTx.tx.recipient);
-            validateSignature(signedTx.tx.sender, digest, signedTx.signature);
+            validateSignature(
+                signedTx.tx.sender,
+                _hashTypedDataV4(
+                    keccak256(
+                        abi.encode(
+                            keccak256(bytes(TRANSFER_QUOTE_SIGNATURE)),
+                            signedTx.tx.sender,
+                            signedTx.tx.recipient,
+                            signedTx.tx.amount,
+                            signedTx.tx.nonce
+                        )
+                    )
+                ),
+                signedTx.signature
+            );
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
             clearinghouse.transferQuote(signedTx.tx);
@@ -804,8 +820,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     }
 
     function _getQuote() internal view returns (IERC20Base) {
-        IERC20Base token = IERC20Base(spotEngine.getToken(QUOTE_PRODUCT_ID));
-        return token;
+        return IERC20Base(spotEngine.getToken(QUOTE_PRODUCT_ID));
     }
 
     function getPriceX18(uint32 productId)
