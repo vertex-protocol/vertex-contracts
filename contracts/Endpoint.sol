@@ -84,6 +84,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
 
     IVerifier private verifier;
 
+    mapping(address => bool) public depositors;
+
     function _updatePrice(uint32 productId, int128 _priceX18) internal {
         require(_priceX18 > 0, ERR_INVALID_PRICE);
         address engine = clearinghouse.getEngineByProduct(productId);
@@ -281,6 +283,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         string memory referralCode
     ) public {
         require(bytes(referralCode).length != 0, ERR_INVALID_REFERRAL_CODE);
+
+        require(depositors[msg.sender], ERR_DEPOSITOR_NOT_ENABLED);
 
         address sender = address(bytes20(subaccount));
 
@@ -869,5 +873,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
 
     function updateSanctions(address _sanctions) external onlyOwner {
         sanctions = ISanctionsList(_sanctions);
+    }
+
+    function updateDepositor(address _depositor, bool _enabled) external onlyOwner {
+        depositors[_depositor] = _enabled;
     }
 }
