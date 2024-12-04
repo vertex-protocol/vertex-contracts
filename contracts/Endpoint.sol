@@ -144,6 +144,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         );
     }
 
+    function validateSubmissionIdx(uint64 idx) private view {
+        require(idx == nSubmissions, ERR_INVALID_SUBMISSION_INDEX);
+    }
+
     function validateNonce(bytes32 sender, uint64 nonce) internal virtual {
         require(
             nonce == nonces[address(uint160(bytes20(sender)))]++,
@@ -182,12 +186,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         virtual
         returns (address)
     {
-        // if (RiskHelper.isFrontendAccount(subaccount)) {
-        //     return linkedSigners[RiskHelper.defaultFrontendAccount(subaccount)];
-        // } else {
-        //     return linkedSigners[subaccount];
-        // }
-        // NOTE: temp fix to unblock frontend.
         return linkedSigners[subaccount];
     }
 
@@ -280,7 +278,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         uint128 amount,
         string memory referralCode
     ) public {
-        require(bytes(referralCode).length != 0, ERR_INVALID_REFERRAL_CODE);
+        require(bytes(referralCode).length != 0);
+        require(!RiskHelper.isIsolatedSubaccount(subaccount), ERR_UNAUTHORIZED);
 
         address sender = address(bytes20(subaccount));
 
@@ -392,26 +391,31 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             ERR_SLOW_TX_TOO_RECENT
         );
 
-        uint256 gasRemaining = gasleft();
-        try this.processSlowModeTransaction(txn.sender, txn.tx) {} catch {
-            // we need to differentiate between a revert and an out of gas
-            // the issue is that in evm every inner call only 63/64 of the
-            // remaining gas in the outer frame is forwarded. as a result
-            // the amount of gas left for execution is (63/64)**len(stack)
-            // and you can get an out of gas while spending an arbitrarily
-            // low amount of gas in the final frame. we use a heuristic
-            // here that isn't perfect but covers our cases.
-            // having gasleft() <= gasRemaining / 2 buys us 44 nested calls
-            // before we miss out of gas errors; 1/2 ~= (63/64)**44
-            // this is good enough for our purposes
+        if (block.chainid == 31337) {
+            // for testing purposes, we don't fail silently when the chainId is hardhat's default.
+            this.processSlowModeTransaction(txn.sender, txn.tx);
+        } else {
+            uint256 gasRemaining = gasleft();
+            try this.processSlowModeTransaction(txn.sender, txn.tx) {} catch {
+                // we need to differentiate between a revert and an out of gas
+                // the issue is that in evm every inner call only 63/64 of the
+                // remaining gas in the outer frame is forwarded. as a result
+                // the amount of gas left for execution is (63/64)**len(stack)
+                // and you can get an out of gas while spending an arbitrarily
+                // low amount of gas in the final frame. we use a heuristic
+                // here that isn't perfect but covers our cases.
+                // having gasleft() <= gasRemaining / 2 buys us 44 nested calls
+                // before we miss out of gas errors; 1/2 ~= (63/64)**44
+                // this is good enough for our purposes
 
-            if (gasleft() <= 250000 || gasleft() <= gasRemaining / 2) {
-                assembly {
-                    invalid()
+                if (gasleft() <= 250000 || gasleft() <= gasRemaining / 2) {
+                    assembly {
+                        invalid()
+                    }
                 }
-            }
 
-            // try return funds now removed
+                // try return funds now removed
+            }
         }
     }
 
@@ -764,6 +768,17 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             );
         } else if (txType == TransactionType.AssertCode) {
             clearinghouse.assertCode(transaction);
+        } else if (txType == TransactionType.CreateIsolatedSubaccount) {
+            CreateIsolatedSubaccount memory txn = abi.decode(
+                transaction[1:],
+                (CreateIsolatedSubaccount)
+            );
+            bytes32 newIsolatedSubaccount = IOffchainExchange(offchainExchange)
+                .createIsolatedSubaccount(
+                    txn,
+                    getLinkedSigner(txn.order.sender)
+                );
+            _recordSubaccount(newIsolatedSubaccount);
         } else {
             revert();
         }
@@ -776,7 +791,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         bytes32 s,
         uint8 signerBitmask
     ) external {
-        require(idx == nSubmissions, ERR_INVALID_SUBMISSION_INDEX);
+        validateSubmissionIdx(idx);
         require(msg.sender == sequencer);
         // TODO: if one of these transactions fails this means the sequencer is in an error state
         // we should probably record this, and engage some sort of recovery mode
@@ -800,7 +815,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         uint256 gasLimit
     ) external {
         uint256 gasUsed = gasleft();
-        require(idx == nSubmissions, ERR_INVALID_SUBMISSION_INDEX);
+        validateSubmissionIdx(idx);
         for (uint256 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];
             processTransaction(transaction);

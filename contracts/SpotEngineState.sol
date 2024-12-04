@@ -276,24 +276,6 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         );
     }
 
-    //
-    //    function _getQuoteState(uint32 isoGroup)
-    //        internal
-    //        view
-    //        returns (State memory)
-    //    {
-    //        State memory state = quoteStates[isoGroup];
-    //        if (state.cumulativeDepositsMultiplierX18 == 0) {
-    //            state = State({
-    //                cumulativeDepositsMultiplierX18: ONE,
-    //                cumulativeBorrowsMultiplierX18: ONE,
-    //                totalDepositsNormalized: 0,
-    //                totalBorrowsNormalized: 0
-    //            });
-    //        }
-    //        return state;
-    //    }
-
     function balanceNormalizedToBalance(
         State memory state,
         BalanceNormalized memory balance
@@ -320,9 +302,6 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         view
         returns (State memory, Balance memory)
     {
-        //        State memory state = productId == QUOTE_PRODUCT_ID
-        //            ? _getQuoteState(RiskHelper.isoGroup(subaccount))
-        //            : states[productId];
         State memory state = states[productId];
         BalanceNormalized memory balance = balances[productId][subaccount]
             .balance;
@@ -334,9 +313,6 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         view
         returns (Balance memory)
     {
-        //        State memory state = productId == QUOTE_PRODUCT_ID
-        //            ? _getQuoteState(RiskHelper.isoGroup(subaccount))
-        //            : states[productId];
         State memory state = states[productId];
         BalanceNormalized memory balance = balances[productId][subaccount]
             .balance;
@@ -387,9 +363,6 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         )
     {
         LpState memory lpState = lpStates[productId];
-        //        State memory state = productId == QUOTE_PRODUCT_ID
-        //            ? _getQuoteState(RiskHelper.isoGroup(subaccount))
-        //            : states[productId];
         State memory state = states[productId];
 
         Balances memory bal = balances[productId][subaccount];
@@ -438,22 +411,6 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             ERR_BAD_PRODUCT_CONFIG
         );
         minDepositRatesX18[productId] = minDepositRateX18;
-    }
-
-    function getProductIds(uint32 isoGroup)
-        public
-        view
-        override(BaseEngine, IProductEngine)
-        returns (uint32[] memory)
-    {
-        if (isoGroup == 0) {
-            return getCrossProductIds();
-        } else {
-            uint32[] memory productIds = new uint32[](2);
-            productIds[0] = QUOTE_PRODUCT_ID;
-            productIds[1] = isoGroup;
-            return productIds;
-        }
     }
 
     function getMinDepositRate(uint32 productId)

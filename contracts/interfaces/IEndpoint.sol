@@ -35,7 +35,8 @@ interface IEndpoint {
         RebalanceXWithdraw,
         UpdateMinDepositRate,
         AssertCode,
-        WithdrawInsurance
+        WithdrawInsurance,
+        CreateIsolatedSubaccount
     }
 
     struct UpdateProduct {
@@ -296,6 +297,21 @@ interface IEndpoint {
 
     struct SignedTransferQuote {
         TransferQuote tx;
+        bytes signature;
+    }
+
+    struct IsolatedOrder {
+        bytes32 sender;
+        int128 priceX18;
+        int128 amount;
+        uint64 expiration;
+        uint64 nonce;
+        int128 margin;
+    }
+
+    struct CreateIsolatedSubaccount {
+        IsolatedOrder order;
+        uint32 productId;
         bytes signature;
     }
 

@@ -222,8 +222,7 @@ contract PerpEngine is PerpEngineLp {
     {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
-        uint32 isoGroup = RiskHelper.isoGroup(subaccount);
-        uint32[] memory _productIds = getProductIds(isoGroup);
+        uint32[] memory _productIds = getProductIds();
         for (uint128 i = 0; i < _productIds.length; ++i) {
             uint32 productId = _productIds[i];
             (State memory state, Balance memory balance) = getStateAndBalance(
