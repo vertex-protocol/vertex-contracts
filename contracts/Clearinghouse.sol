@@ -230,6 +230,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         virtual
         onlyEndpoint
     {
+        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
@@ -261,6 +262,26 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             bytes20(txn.sender) == bytes20(txn.recipient),
             ERR_UNAUTHORIZED
         );
+        address offchainExchange = IEndpoint(getEndpoint())
+            .getOffchainExchange();
+        if (RiskHelper.isIsolatedSubaccount(txn.sender)) {
+            // isolated subaccounts can only transfer quote back to parent
+            require(
+                IOffchainExchange(offchainExchange).getParentSubaccount(
+                    txn.sender
+                ) == txn.recipient,
+                ERR_UNAUTHORIZED
+            );
+        } else if (RiskHelper.isIsolatedSubaccount(txn.recipient)) {
+            // regular subaccounts can transfer quote to active isolated subaccounts
+            require(
+                IOffchainExchange(offchainExchange).isIsolatedSubaccountActive(
+                    txn.sender,
+                    txn.recipient
+                ),
+                ERR_UNAUTHORIZED
+            );
+        }
 
         spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, -toTransfer);
         spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.recipient, toTransfer);
@@ -332,6 +353,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         address sendTo,
         uint64 idx
     ) external virtual onlyEndpoint {
+        require(!RiskHelper.isIsolatedSubaccount(sender), ERR_UNAUTHORIZED);
         require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
@@ -363,6 +385,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         virtual
         onlyEndpoint
     {
+        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         require(txn.productId != QUOTE_PRODUCT_ID);
         productToEngine[txn.productId].mintLp(
             txn.productId,
@@ -379,6 +402,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         virtual
         onlyEndpoint
     {
+        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         productToEngine[txn.productId].burnLp(
             txn.productId,
             txn.sender,
@@ -391,6 +415,11 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         virtual
         onlyEndpoint
     {
+        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
+        require(
+            !RiskHelper.isIsolatedSubaccount(txn.recipient),
+            ERR_UNAUTHORIZED
+        );
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
@@ -411,6 +440,10 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         IEndpoint.ClaimSequencerFees calldata txn,
         int128[] calldata fees
     ) external virtual onlyEndpoint {
+        require(
+            !RiskHelper.isIsolatedSubaccount(txn.subaccount),
+            ERR_UNAUTHORIZED
+        );
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );

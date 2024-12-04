@@ -100,8 +100,6 @@ string constant ERR_DSYNC = "DSYNC";
 
 string constant ERR_INVALID_SWAP_PARAMS = "ISP";
 
-string constant ERR_INVALID_REFERRAL_CODE = "IRC";
-
 string constant ERR_CONVERSION_OVERFLOW = "CO";
 
 string constant ERR_ONLY_CLEARINGHOUSE_CAN_SET_BOOK = "OCCSB";

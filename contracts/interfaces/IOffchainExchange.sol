@@ -93,4 +93,21 @@ interface IOffchainExchange {
     function matchOrders(IEndpoint.MatchOrdersWithSigner calldata tx) external;
 
     function dumpFees() external;
+
+    function createIsolatedSubaccount(
+        IEndpoint.CreateIsolatedSubaccount memory tx,
+        address linkedSigner
+    ) external returns (bytes32);
+
+    function isIsolatedSubaccountActive(bytes32 parent, bytes32 subaccount)
+        external
+        view
+        returns (bool);
+
+    function getParentSubaccount(bytes32 subaccount)
+        external
+        view
+        returns (bytes32);
+
+    function tryCloseIsolatedSubaccount(bytes32 subaccount) external;
 }
