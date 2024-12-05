@@ -45,7 +45,6 @@ contract SpotEngine is SpotEngineLP {
             totalBorrowsNormalized: 0
         });
         productIds.push(QUOTE_PRODUCT_ID);
-        _crossMask().value |= 1; // 1 << 0
         emit AddProduct(QUOTE_PRODUCT_ID);
     }
 
@@ -168,8 +167,6 @@ contract SpotEngine is SpotEngineLP {
         returns (int128)
     {
         _assertInternal();
-        //        uint32 isoGroup = RiskHelper.isoGroup(subaccount);
-        //        State memory state = _getQuoteState(isoGroup);
         State memory state = states[QUOTE_PRODUCT_ID];
         BalanceNormalized memory balanceNormalized = balances[QUOTE_PRODUCT_ID][
             subaccount
@@ -186,7 +183,6 @@ contract SpotEngine is SpotEngineLP {
             insurance -= topUpAmount;
             _updateBalanceNormalized(state, balanceNormalized, topUpAmount);
         }
-        //        quoteStates[isoGroup] = state;
         states[QUOTE_PRODUCT_ID] = state;
         balances[QUOTE_PRODUCT_ID][subaccount].balance = balanceNormalized;
         return insurance;
@@ -216,11 +212,6 @@ contract SpotEngine is SpotEngineLP {
         balances[productId][subaccount].balance = balance;
         balances[QUOTE_PRODUCT_ID][subaccount].balance = quoteBalance;
 
-        //        if (productId == QUOTE_PRODUCT_ID) {
-        //            quoteStates[RiskHelper.isoGroup(subaccount)] = state;
-        //        } else {
-        //            states[productId] = state;
-        //        }
         states[productId] = state;
         states[QUOTE_PRODUCT_ID] = quoteState;
 
@@ -235,9 +226,6 @@ contract SpotEngine is SpotEngineLP {
     ) external {
         _assertInternal();
 
-        //        State memory state = productId == QUOTE_PRODUCT_ID
-        //            ? _getQuoteState(RiskHelper.isoGroup(subaccount))
-        //            : states[productId];
         State memory state = states[productId];
 
         BalanceNormalized memory balance = balances[productId][subaccount]
@@ -245,11 +233,6 @@ contract SpotEngine is SpotEngineLP {
         _updateBalanceNormalized(state, balance, amountDelta);
         balances[productId][subaccount].balance = balance;
 
-        //        if (productId == QUOTE_PRODUCT_ID) {
-        //            quoteStates[RiskHelper.isoGroup(subaccount)] = state;
-        //        } else {
-        //            states[productId] = state;
-        //        }
         states[productId] = state;
         _balanceUpdate(productId, subaccount);
     }
@@ -273,14 +256,10 @@ contract SpotEngine is SpotEngineLP {
     function socializeSubaccount(bytes32 subaccount) external {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
-        uint32 isoGroup = RiskHelper.isoGroup(subaccount);
-        uint32[] memory _productIds = getProductIds(isoGroup);
+        uint32[] memory _productIds = getProductIds();
         for (uint128 i = 0; i < _productIds.length; ++i) {
             uint32 productId = _productIds[i];
 
-            //            State memory state = productId == QUOTE_PRODUCT_ID
-            //                ? _getQuoteState(isoGroup)
-            //                : states[productId];
             State memory state = states[productId];
             Balance memory balance = balanceNormalizedToBalance(
                 state,
@@ -318,11 +297,6 @@ contract SpotEngine is SpotEngineLP {
                     _updateBalanceWithoutDelta(state, lpState.base);
                     lpStates[productId] = lpState;
                 }
-                //                if (productId == QUOTE_PRODUCT_ID) {
-                //                    quoteStates[isoGroup] = state;
-                //                } else {
-                //                    states[productId] = state;
-                //                }
                 states[productId] = state;
                 _balanceUpdate(productId, subaccount);
             }
@@ -335,9 +309,6 @@ contract SpotEngine is SpotEngineLP {
     ) external view {
         for (uint128 i = 0; i < totalDeposits.length; ++i) {
             uint32 productId = productIds[i];
-            //            State memory state = productId == QUOTE_PRODUCT_ID
-            //                ? quoteStates[0]
-            //                : states[productId];
             State memory state = states[productId];
             require(
                 state.totalDepositsNormalized.mul(

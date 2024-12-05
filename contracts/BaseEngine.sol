@@ -27,28 +27,15 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
     // Whether an address can apply deltas - all orderbooks and clearinghouse is whitelisted
     mapping(address => bool) internal canApplyDeltas;
 
-    bytes32 internal constant CROSS_MASK_STORAGE =
-        keccak256("vertex.protocol.crossmask");
-
     bytes32 internal constant RISK_STORAGE = keccak256("vertex.protocol.risk");
 
     event BalanceUpdate(uint32 productId, bytes32 subaccount);
     event ProductUpdate(uint32 productId);
-    event QuoteProductUpdate(uint32 isoGroup);
 
     function _productUpdate(uint32 productId) internal virtual {}
 
-    function _quoteProductUpdate(uint32 isoGroup) internal virtual {}
-
     struct Uint256Slot {
         uint256 value;
-    }
-
-    function _crossMask() internal pure returns (Uint256Slot storage r) {
-        bytes32 slot = CROSS_MASK_STORAGE;
-        assembly {
-            r.slot := slot
-        }
     }
 
     struct RiskStoreMappingSlot {
@@ -112,9 +99,7 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         bytes32 subaccount,
         IProductEngine.HealthType healthType
     ) public view returns (int128 health) {
-        uint32[] memory _productIds = getProductIds(
-            RiskHelper.isoGroup(subaccount)
-        );
+        uint32[] memory _productIds = getProductIds();
         RiskStoreMappingSlot storage r = _risk();
 
         for (uint32 i = 0; i < _productIds.length; i++) {
@@ -215,32 +200,6 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         return productIds;
     }
 
-    function getProductIds(uint32 isoGroup)
-        public
-        view
-        virtual
-        returns (uint32[] memory);
-
-    function getCrossProductIds() internal view returns (uint32[] memory) {
-        uint256 mask = _crossMask().value;
-        uint256 tempMask = mask;
-        uint32 numProducts = 0;
-        while (tempMask > 0) {
-            tempMask = tempMask & (tempMask - 1);
-            numProducts++;
-        }
-
-        uint32[] memory crossProducts = new uint32[](numProducts);
-        // smallest productId to largest
-        for (uint32 j = 0; j < 256; j++) {
-            uint32 i = 255 - j;
-            if (((mask >> i) & 1) == 1) {
-                crossProducts[--numProducts] = i;
-            }
-        }
-        return crossProducts;
-    }
-
     function _addProductForId(
         uint32 productId,
         uint32 quoteId,
@@ -285,10 +244,6 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
             minSize,
             lpSpreadX18
         );
-
-        if (productId < 256) {
-            _crossMask().value |= 1 << productId;
-        }
 
         emit AddProduct(productId);
     }

@@ -138,12 +138,11 @@ abstract contract PerpEngineLp is PerpEngineState {
         return (baseDelta, quoteDelta);
     }
 
-    function decomposeLps(
-        uint32 isoGroup,
-        bytes32 liquidatee,
-        bytes32 liquidator
-    ) external returns (int128 liquidationFees) {
-        uint32[] memory _productIds = getProductIds(isoGroup);
+    function decomposeLps(bytes32 liquidatee, bytes32 liquidator)
+        external
+        returns (int128 liquidationFees)
+    {
+        uint32[] memory _productIds = getProductIds();
         for (uint128 i = 0; i < _productIds.length; ++i) {
             uint32 productId = _productIds[i];
             (, int128 amountQuote) = burnLp(

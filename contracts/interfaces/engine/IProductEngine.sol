@@ -75,24 +75,15 @@ interface IProductEngine {
         int128 amountLp
     ) external returns (int128, int128);
 
-    function decomposeLps(
-        uint32 isoGroup,
-        bytes32 liquidatee,
-        bytes32 liquidator
-    ) external returns (int128);
+    function decomposeLps(bytes32 liquidatee, bytes32 liquidator)
+        external
+        returns (int128);
 
     /// @notice return clearinghouse addr
     function getClearinghouse() external view returns (address);
 
     /// @notice return productIds associated with engine
     function getProductIds() external view returns (uint32[] memory);
-
-    /// @notice return productIds associated with an isoGroup
-    // 0 -> cross group
-    function getProductIds(uint32 isoGroup)
-        external
-        view
-        returns (uint32[] memory);
 
     function getRisk(uint32 productId)
         external

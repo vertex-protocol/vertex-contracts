@@ -84,9 +84,8 @@ contract ClearinghouseLiq is
         uint32 perpId = 0;
 
         // iterate spreads and determine spot / perp ids if applicable
-        if (RiskHelper.isoGroup(txn.liquidatee) == 0) {
+        {
             uint256 _spreads = spreads;
-
             while (_spreads > 0) {
                 uint32 _spotId = uint32(_spreads & 0xFF);
                 _spreads >>= 8;
@@ -254,92 +253,65 @@ contract ClearinghouseLiq is
         // ensure:
         // 1. no positive spot balances
         // 2. no perp balance that aren't part of a spread liability
-        uint32 isoGroup = RiskHelper.isoGroup(txn.liquidatee);
-        if (isoGroup != 0) {
-            bool isPerp = _isPerp(txn, perpEngine);
-            if (isPerp) {
-                IPerpEngine.Balance memory balance = perpEngine.getBalance(
-                    txn.productId,
-                    txn.liquidatee
-                );
-                require(balance.amount != 0, ERR_NOT_LIQUIDATABLE_LIABILITIES);
+        uint256 clearedPerpIds = 0;
+        uint256 clearedSpotIds = 0;
+        uint256 _spreads = spreads;
+        while (_spreads > 0) {
+            uint32 _spotId = uint32(_spreads & 0xFF);
+            _spreads >>= 8;
+            uint32 _perpId = uint32(_spreads & 0xFF);
+            _spreads >>= 8;
+
+            ISpotEngine.Balance memory spotBalance = spotEngine.getBalance(
+                _spotId,
+                txn.liquidatee
+            );
+            require(spotBalance.amount <= 0, ERR_NOT_LIQUIDATABLE_LIABILITIES);
+            clearedSpotIds |= 1 << _spotId;
+            IPerpEngine.Balance memory perpBalance = perpEngine.getBalance(
+                _perpId,
+                txn.liquidatee
+            );
+            // either perp amount is 0 or it is positive and it is part of a spread
+            if (perpBalance.amount >= 0) {
+                if (perpBalance.amount > 0) {
+                    require(
+                        spotBalance.amount < 0 &&
+                            spotBalance.amount.abs() >=
+                            perpBalance.amount.abs(),
+                        ERR_NOT_LIQUIDATABLE_LIABILITIES
+                    );
+                }
+                clearedPerpIds |= 1 << _perpId;
             } else {
+                revert(ERR_NOT_LIQUIDATABLE_LIABILITIES);
+            }
+        }
+
+        uint32[] memory spotIds = spotEngine.getProductIds();
+        uint32[] memory perpIds = perpEngine.getProductIds();
+        require(spotIds[0] == QUOTE_PRODUCT_ID);
+        for (uint32 i = 1; i < spotIds.length; ++i) {
+            uint32 spotId = spotIds[i];
+            if ((clearedSpotIds & (1 << spotId)) == 0) {
+                if (spotEngine.getRisk(spotId).longWeightInitialX18 == 0) {
+                    continue;
+                }
                 ISpotEngine.Balance memory balance = spotEngine.getBalance(
-                    txn.productId,
+                    spotId,
                     txn.liquidatee
                 );
                 require(balance.amount <= 0, ERR_NOT_LIQUIDATABLE_LIABILITIES);
             }
-        } else {
-            uint256 clearedPerpIds = 0;
-            uint256 clearedSpotIds = 0;
-            uint256 _spreads = spreads;
-            while (_spreads > 0) {
-                uint32 _spotId = uint32(_spreads & 0xFF);
-                _spreads >>= 8;
-                uint32 _perpId = uint32(_spreads & 0xFF);
-                _spreads >>= 8;
-
-                ISpotEngine.Balance memory spotBalance = spotEngine.getBalance(
-                    _spotId,
+        }
+        for (uint32 i = 0; i < perpIds.length; ++i) {
+            uint32 perpId = perpIds[i];
+            if ((clearedPerpIds & (1 << perpId)) == 0) {
+                IPerpEngine.Balance memory balance = perpEngine.getBalance(
+                    perpId,
                     txn.liquidatee
                 );
-                require(
-                    spotBalance.amount <= 0,
-                    ERR_NOT_LIQUIDATABLE_LIABILITIES
-                );
-                clearedSpotIds |= 1 << _spotId;
-                IPerpEngine.Balance memory perpBalance = perpEngine.getBalance(
-                    _perpId,
-                    txn.liquidatee
-                );
-                // either perp amount is 0 or it is positive and it is part of a spread
-                if (perpBalance.amount >= 0) {
-                    if (perpBalance.amount > 0) {
-                        require(
-                            spotBalance.amount < 0 &&
-                                spotBalance.amount.abs() >=
-                                perpBalance.amount.abs(),
-                            ERR_NOT_LIQUIDATABLE_LIABILITIES
-                        );
-                    }
-                    clearedPerpIds |= 1 << _perpId;
-                } else {
-                    revert(ERR_NOT_LIQUIDATABLE_LIABILITIES);
-                }
-            }
-
-            uint32[] memory spotIds = spotEngine.getProductIds(isoGroup);
-            uint32[] memory perpIds = perpEngine.getProductIds(isoGroup);
-            require(spotIds[0] == QUOTE_PRODUCT_ID);
-            for (uint32 i = 1; i < spotIds.length; ++i) {
-                uint32 spotId = spotIds[i];
-                if ((clearedSpotIds & (1 << spotId)) == 0) {
-                    if (spotEngine.getRisk(spotId).longWeightInitialX18 == 0) {
-                        continue;
-                    }
-                    ISpotEngine.Balance memory balance = spotEngine.getBalance(
-                        spotId,
-                        txn.liquidatee
-                    );
-                    require(
-                        balance.amount <= 0,
-                        ERR_NOT_LIQUIDATABLE_LIABILITIES
-                    );
-                }
-            }
-            for (uint32 i = 0; i < perpIds.length; ++i) {
-                uint32 perpId = perpIds[i];
-                if ((clearedPerpIds & (1 << perpId)) == 0) {
-                    IPerpEngine.Balance memory balance = perpEngine.getBalance(
-                        perpId,
-                        txn.liquidatee
-                    );
-                    require(
-                        balance.amount == 0,
-                        ERR_NOT_LIQUIDATABLE_LIABILITIES
-                    );
-                }
+                require(balance.amount == 0, ERR_NOT_LIQUIDATABLE_LIABILITIES);
             }
         }
     }
@@ -360,7 +332,6 @@ contract ClearinghouseLiq is
     struct FinalizeVars {
         uint32[] spotIds;
         uint32[] perpIds;
-        uint32 isoGroup;
         int128 insurance;
         bool canLiquidateMore;
     }
@@ -384,9 +355,8 @@ contract ClearinghouseLiq is
 
         FinalizeVars memory v;
 
-        v.isoGroup = RiskHelper.isoGroup(txn.liquidatee);
-        v.spotIds = spotEngine.getProductIds(v.isoGroup);
-        v.perpIds = perpEngine.getProductIds(v.isoGroup);
+        v.spotIds = spotEngine.getProductIds();
+        v.perpIds = perpEngine.getProductIds();
         // - after settling all positive pnls, if (quote + insurance) is positive,
         //   all spot liabilities have closed
 
@@ -508,22 +478,8 @@ contract ClearinghouseLiq is
         ISpotEngine spotEngine,
         IPerpEngine perpEngine
     ) internal returns (bool) {
-        uint32 isoGroup;
-        if (txn.isEncodedSpread) {
-            isoGroup = 0;
-        } else {
-            isoGroup = RiskHelper.isoGroup(txn.productId);
-        }
-        insurance += spotEngine.decomposeLps(
-            isoGroup,
-            txn.liquidatee,
-            txn.sender
-        );
-        insurance += perpEngine.decomposeLps(
-            isoGroup,
-            txn.liquidatee,
-            txn.sender
-        );
+        insurance += spotEngine.decomposeLps(txn.liquidatee, txn.sender);
+        insurance += perpEngine.decomposeLps(txn.liquidatee, txn.sender);
         return
             getHealthFromClearinghouse(
                 txn.liquidatee,
@@ -536,9 +492,7 @@ contract ClearinghouseLiq is
         ISpotEngine spotEngine,
         IPerpEngine perpEngine
     ) internal {
-        uint32[] memory productIds = perpEngine.getProductIds(
-            RiskHelper.isoGroup(txn.liquidatee)
-        );
+        uint32[] memory productIds = perpEngine.getProductIds();
         for (uint32 i = 0; i < productIds.length; ++i) {
             uint32 productId = productIds[i];
             _settlePositivePerpPnl(txn, spotEngine, perpEngine, productId);
@@ -758,6 +712,7 @@ contract ClearinghouseLiq is
     function liquidateSubaccountImpl(IEndpoint.LiquidateSubaccount calldata txn)
         external
     {
+        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         require(txn.sender != txn.liquidatee, ERR_UNAUTHORIZED);
         require(isUnderMaintenance(txn.liquidatee), ERR_NOT_LIQUIDATABLE);
         require(txn.liquidatee != X_ACCOUNT, ERR_NOT_LIQUIDATABLE);
@@ -774,6 +729,11 @@ contract ClearinghouseLiq is
         );
 
         if (_finalizeSubaccount(txn, spotEngine, perpEngine)) {
+            if (RiskHelper.isIsolatedSubaccount(txn.liquidatee)) {
+                IOffchainExchange(
+                    IEndpoint(getEndpoint()).getOffchainExchange()
+                ).tryCloseIsolatedSubaccount(txn.liquidatee);
+            }
             return;
         }
 
