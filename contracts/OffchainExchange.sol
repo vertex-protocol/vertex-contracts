@@ -203,6 +203,8 @@ contract OffchainExchange is
             isolatedSubaccountsMask[addr] &= ~uint256(0) ^ (1 << id);
             isolatedSubaccounts[parent][id] = bytes32(0);
             parentSubaccounts[subaccount] = bytes32(0);
+
+            emit CloseIsolatedSubaccount(subaccount, parent);
         }
     }
 
@@ -1069,29 +1071,45 @@ contract OffchainExchange is
 
         address senderAddress = address(uint160(bytes20(txn.order.sender)));
         uint256 mask = isolatedSubaccountsMask[senderAddress];
-        require(
-            mask != (1 << MAX_ISOLATED_SUBACCOUNTS_PER_ADDRESS) - 1,
-            "Too many isolated subaccounts"
-        );
-
-        uint8 id = 0;
-        while (mask & 1 != 0) {
-            mask >>= 1;
-            id += 1;
+        bytes32 newIsolatedSubaccount = bytes32(0);
+        for (uint256 id = 0; (1 << id) <= mask; id += 1) {
+            if (mask & (1 << id) != 0) {
+                bytes32 subaccount = isolatedSubaccounts[txn.order.sender][id];
+                if (subaccount != bytes32(0)) {
+                    uint32 productId = RiskHelper.getIsolatedProductId(
+                        subaccount
+                    );
+                    if (productId == txn.productId) {
+                        newIsolatedSubaccount = subaccount;
+                        break;
+                    }
+                }
+            }
         }
 
-        // |  address | reserved | productId |   id   |  'iso'  |
-        // | 20 bytes |  6 bytes |  2 bytes  | 1 byte | 3 bytes |
-        bytes32 newIsolatedSubaccount = bytes32(
-            (uint256(uint160(senderAddress)) << 96) |
-                (uint256(txn.productId) << 32) |
-                (uint256(id) << 24) |
-                6910831
-        );
+        if (newIsolatedSubaccount == bytes32(0)) {
+            require(
+                mask != (1 << MAX_ISOLATED_SUBACCOUNTS_PER_ADDRESS) - 1,
+                "Too many isolated subaccounts"
+            );
+            uint8 id = 0;
+            while (mask & 1 != 0) {
+                mask >>= 1;
+                id += 1;
+            }
 
-        isolatedSubaccountsMask[senderAddress] |= 1 << id;
-        parentSubaccounts[newIsolatedSubaccount] = txn.order.sender;
-        isolatedSubaccounts[txn.order.sender][id] = newIsolatedSubaccount;
+            // |  address | reserved | productId |   id   |  'iso'  |
+            // | 20 bytes |  6 bytes |  2 bytes  | 1 byte | 3 bytes |
+            newIsolatedSubaccount = bytes32(
+                (uint256(uint160(senderAddress)) << 96) |
+                    (uint256(txn.productId) << 32) |
+                    (uint256(id) << 24) |
+                    6910831
+            );
+            isolatedSubaccountsMask[senderAddress] |= 1 << id;
+            parentSubaccounts[newIsolatedSubaccount] = txn.order.sender;
+            isolatedSubaccounts[txn.order.sender][id] = newIsolatedSubaccount;
+        }
 
         bytes32 digest = getDigest(
             txn.productId,
@@ -1104,18 +1122,20 @@ contract OffchainExchange is
             })
         );
         digestToSubaccount[digest] = newIsolatedSubaccount;
-        digestToMargin[digest] = txn.order.margin;
 
-        spotEngine.updateBalance(
-            QUOTE_PRODUCT_ID,
-            txn.order.sender,
-            -txn.order.margin
-        );
-        spotEngine.updateBalance(
-            QUOTE_PRODUCT_ID,
-            newIsolatedSubaccount,
-            txn.order.margin
-        );
+        if (txn.order.margin > 0) {
+            digestToMargin[digest] = txn.order.margin;
+            spotEngine.updateBalance(
+                QUOTE_PRODUCT_ID,
+                txn.order.sender,
+                -txn.order.margin
+            );
+            spotEngine.updateBalance(
+                QUOTE_PRODUCT_ID,
+                newIsolatedSubaccount,
+                txn.order.margin
+            );
+        }
 
         return newIsolatedSubaccount;
     }
