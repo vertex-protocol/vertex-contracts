@@ -23,6 +23,11 @@ interface IOffchainExchange {
         int128 quoteDelta
     );
 
+    event CloseIsolatedSubaccount(
+        bytes32 indexed isolatedSubaccount,
+        bytes32 indexed parentSubaccount
+    );
+
     struct FeeRates {
         int64 makerRateX18;
         int64 takerRateX18;
