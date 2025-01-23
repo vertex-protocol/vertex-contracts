@@ -567,7 +567,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             );
             chargeFee(
                 signedTx.tx.sender,
-                spotEngine.getWithdrawFee(signedTx.tx.productId),
+                clearinghouse.getWithdrawFee(signedTx.tx.productId),
                 signedTx.tx.productId
             );
             clearinghouse.withdrawCollateral(
