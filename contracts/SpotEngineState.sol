@@ -294,6 +294,20 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             );
     }
 
+    function _balanceUpdate(uint32 productId, bytes32 subaccount)
+        internal
+        virtual
+        override
+    {
+        Balance memory balance = getBalance(productId, subaccount);
+        emit SpotBalance(
+            subaccount,
+            productId,
+            balance.amount,
+            balance.lastCumulativeMultiplierX18
+        );
+    }
+
     // TODO: maybe combine the next two functions
     // probably also need some protection where quote state must
     // be fetched through getQuoteState
