@@ -5,6 +5,13 @@ import "./IProductEngine.sol";
 import "../../libraries/RiskHelper.sol";
 
 interface ISpotEngine is IProductEngine {
+    event SpotBalance(
+        bytes32 indexed subaccount,
+        uint32 indexed productId,
+        int128 amount,
+        int128 lastCumulativeMultiplierX18
+    );
+
     event InterestPayment(
         uint32 productId,
         uint128 dt,
@@ -82,8 +89,6 @@ interface ISpotEngine is IProductEngine {
         );
 
     function getConfig(uint32 productId) external view returns (Config memory);
-
-    function getWithdrawFee(uint32 productId) external view returns (int128);
 
     function getToken(uint32 productId) external view returns (address);
 

@@ -60,33 +60,6 @@ contract SpotEngine is SpotEngineLP {
         return configs[productId];
     }
 
-    function getWithdrawFee(uint32 productId) external pure returns (int128) {
-        // TODO: use the map the store withdraw fees
-        // return withdrawFees[productId];
-        if (
-            productId == QUOTE_PRODUCT_ID ||
-            productId == 5 ||
-            productId == 31 ||
-            productId == 41 ||
-            productId == 109
-        ) {
-            // USDC, ARB, USDT, VRTX, MNT
-            return 1e18;
-        } else if (productId == 1) {
-            // BTC
-            return 4e13;
-        } else if (
-            productId == 3 ||
-            productId == 91 ||
-            productId == 93 ||
-            productId == 111
-        ) {
-            // ETH (arbi), ETH (blast), ETH (mantle), wETH
-            return 6e14;
-        }
-        return 0;
-    }
-
     /**
      * Actions
      */
