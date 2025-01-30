@@ -186,20 +186,26 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         virtual
         returns (address)
     {
-        return linkedSigners[subaccount];
+        return
+            RiskHelper.isIsolatedSubaccount(subaccount)
+                ? linkedSigners[
+                    IOffchainExchange(offchainExchange).getParentSubaccount(
+                        subaccount
+                    )
+                ]
+                : linkedSigners[subaccount];
     }
 
     function validateSignature(
         bytes32 sender,
         bytes32 digest,
         bytes memory signature
-    ) internal view virtual {
-        address recovered = ECDSA.recover(digest, signature);
-        require(
-            (recovered != address(0)) &&
-                ((recovered == address(uint160(bytes20(sender)))) ||
-                    (recovered == getLinkedSigner(sender))),
-            ERR_INVALID_SIGNATURE
+    ) internal virtual {
+        verifier.validateSignature(
+            sender,
+            getLinkedSigner(sender),
+            digest,
+            signature
         );
     }
 

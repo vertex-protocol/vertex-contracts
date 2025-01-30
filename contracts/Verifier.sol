@@ -262,4 +262,19 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         }
         require(nSignatures == nSigner, "not enough signatures");
     }
+
+    function validateSignature(
+        bytes32 sender,
+        address linkedSigner,
+        bytes32 digest,
+        bytes memory signature
+    ) public pure {
+        address recovered = ECDSA.recover(digest, signature);
+        require(
+            (recovered != address(0)) &&
+                ((recovered == address(uint160(bytes20(sender)))) ||
+                    (recovered == linkedSigner)),
+            ERR_INVALID_SIGNATURE
+        );
+    }
 }
