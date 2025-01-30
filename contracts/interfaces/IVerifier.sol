@@ -10,4 +10,11 @@ interface IVerifier {
     ) external;
 
     function revertGasInfo(uint256 i, uint256 gasUsed) external pure;
+
+    function validateSignature(
+        bytes32 sender,
+        address linkedSigner,
+        bytes32 digest,
+        bytes memory signature
+    ) external pure;
 }
