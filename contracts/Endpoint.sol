@@ -366,6 +366,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             );
         } else if (txType == TransactionType.WithdrawInsurance) {
             require(sender == owner());
+        } else if (txType == TransactionType.DelistProduct) {
+            require(sender == owner());
         } else {
             chargeSlowModeFee(_getQuote(), sender);
             slowModeFees += SLOW_MODE_FEE;
@@ -517,6 +519,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             clearinghouse.burnLpAndTransfer(txn);
         } else if (txType == TransactionType.WithdrawInsurance) {
             clearinghouse.withdrawInsurance(transaction, nSubmissions);
+        } else if (txType == TransactionType.DelistProduct) {
+            clearinghouse.delistProduct(transaction);
         } else {
             revert();
         }

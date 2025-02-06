@@ -36,7 +36,8 @@ interface IEndpoint {
         UpdateMinDepositRate,
         AssertCode,
         WithdrawInsurance,
-        CreateIsolatedSubaccount
+        CreateIsolatedSubaccount,
+        DelistProduct
     }
 
     struct UpdateProduct {
@@ -169,6 +170,12 @@ interface IEndpoint {
     struct WithdrawInsurance {
         uint128 amount;
         address sendTo;
+    }
+
+    struct DelistProduct {
+        uint32 productId;
+        int128 priceX18;
+        bytes32[] subaccounts;
     }
 
     struct Rebate {
