@@ -332,6 +332,43 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         handleWithdrawTransfer(token, txn.sendTo, txn.amount, idx);
     }
 
+    function delistProduct(bytes calldata transaction) external onlyEndpoint {
+        IEndpoint.DelistProduct memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.DelistProduct)
+        );
+        // only perp can be delisted
+        require(
+            productToEngine[txn.productId] ==
+                engineByType[IProductEngine.EngineType.PERP],
+            ERR_INVALID_PRODUCT
+        );
+        require(
+            txn.priceX18 == IEndpoint(getEndpoint()).getPriceX18(txn.productId),
+            ERR_INVALID_PRICE
+        );
+        IPerpEngine perpEngine = IPerpEngine(
+            address(engineByType[IProductEngine.EngineType.PERP])
+        );
+        int128 sumBase = 0;
+        for (uint256 i = 0; i < txn.subaccounts.length; i++) {
+            IPerpEngine.Balance memory balance = perpEngine.getBalance(
+                txn.productId,
+                txn.subaccounts[i]
+            );
+            int128 baseDelta = -balance.amount;
+            int128 quoteDelta = -baseDelta.mul(txn.priceX18);
+            sumBase += baseDelta;
+            perpEngine.updateBalance(
+                txn.productId,
+                txn.subaccounts[i],
+                baseDelta,
+                quoteDelta
+            );
+        }
+        require(sumBase == 0, ERR_INVALID_HOLDER_LIST);
+    }
+
     function handleWithdrawTransfer(
         IERC20Base token,
         address to,
