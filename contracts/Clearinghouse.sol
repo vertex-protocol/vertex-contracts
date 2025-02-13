@@ -713,9 +713,17 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             productId == 5 ||
             productId == 31 ||
             productId == 41 ||
-            productId == 109
+            productId == 109 ||
+            productId == 113 ||
+            productId == 115 ||
+            productId == 119 ||
+            productId == 121 ||
+            productId == 123 ||
+            productId == 125 ||
+            productId == 127 ||
+            productId == 145
         ) {
-            // USDC, ARB, USDT, VRTX, MNT
+            // USDC, ARB, USDT, VRTX, MNT, BLAST (blast), WSEI, BENJI (base), TRUMP (arbi), TRUMP (base), HARRIS (arbi), HARRIS (base), wS
             return 1e18;
         } else if (productId == 1) {
             // BTC
@@ -724,9 +732,11 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             productId == 3 ||
             productId == 91 ||
             productId == 93 ||
-            productId == 111
+            productId == 111 ||
+            productId == 117 ||
+            productId == 149
         ) {
-            // ETH (arbi), ETH (blast), ETH (mantle), wETH
+            // ETH (arbi), ETH (blast), ETH (mantle), METH, ETH (base), wstETH
             return 6e14;
         }
         return 0;
