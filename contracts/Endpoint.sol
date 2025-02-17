@@ -119,6 +119,21 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         this.submitSlowModeTransaction(transaction);
     }
 
+    function depositInsurance(uint256 amount) external {
+        DepositInsurance memory txn = DepositInsurance({
+            sender: msg.sender,
+            amount: amount
+        });
+
+        bytes memory encodedTx = abi.encode(txn);
+        bytes memory transaction = abi.encodePacked(
+            uint8(TransactionType.DepositInsurance),
+            encodedTx
+        );
+
+        this.submitSlowModeTransaction(transaction);
+    }
+
     function submitSlowModeTransaction(bytes calldata transaction) external {
         // TODO: require a bond from the sender except in the case of a deposit
         // this bond is returned to the executor of the slow mode transaction
@@ -146,6 +161,18 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             IERC20Base token = IERC20Base(
                 spotEngine.getConfig(txn.productId).token
             );
+            handleDepositTransfer(token, sender, txn.amount);
+        } else if (txType == TransactionType.DepositInsurance) {
+            DepositInsurance memory txn = abi.decode(
+                transaction[1:],
+                (DepositInsurance)
+            );
+            sender = txn.sender;
+            validateSender(msg.sender, sender);
+            ISpotEngine spotEngine = ISpotEngine(
+                clearinghouse.getEngineByType(IProductEngine.EngineType.SPOT)
+            );
+            IERC20Base token = IERC20Base(clearinghouse.getQuote());
             handleDepositTransfer(token, sender, txn.amount);
         }
 
@@ -188,6 +215,11 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
 
     function executeSlowModeTransactions(uint32 count) external {
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
+        require(
+            count <= _slowModeConfig.txCount - _slowModeConfig.txUpTo,
+            "invalid count provided"
+        );
+
         while (count > 0) {
             _executeSlowModeTransaction(_slowModeConfig, false);
             --count;
@@ -230,6 +262,13 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         } else if (txType == TransactionType.SettlePnl) {
             SettlePnl memory txn = abi.decode(transaction[1:], (SettlePnl));
             clearinghouse.settlePnl(txn);
+        } else if (txType == TransactionType.DepositInsurance) {
+            DepositInsurance memory txn = abi.decode(
+                transaction[1:],
+                (DepositInsurance)
+            );
+            validateSender(txn.sender, sender);
+            clearinghouse.depositInsurance(txn);
         } else if (txType == TransactionType.MintLp) {
             MintLp memory txn = abi.decode(transaction[1:], (MintLp));
             validateSender(txn.sender, sender);
@@ -322,24 +361,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 (MatchOrderAMM)
             );
             IOffchainBook(books[txn.productId]).matchOrderAMM(txn);
-        } else if (txType == TransactionType.DepositInsurance) {
-            SignedDepositInsurance memory signedTx = abi.decode(
-                transaction[1:],
-                (SignedDepositInsurance)
-            );
-            bytes32 digest = _hashTypedDataV4(
-                keccak256(
-                    abi.encode(
-                        keccak256(bytes(DEPOSIT_INSURANCE_SIGNATURE)),
-                        signedTx.tx.sender,
-                        signedTx.tx.amount,
-                        signedTx.tx.nonce
-                    )
-                )
-            );
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
-            validateSignature(signedTx.tx.sender, digest, signedTx.signature);
-            clearinghouse.depositInsurance(signedTx.tx);
         } else if (txType == TransactionType.ExecuteSlowMode) {
             SlowModeConfig memory _slowModeConfig = slowModeConfig;
             _executeSlowModeTransaction(_slowModeConfig, true);
@@ -386,6 +407,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             validateSignature(signedTx.tx.sender, digest, signedTx.signature);
             clearinghouse.burnLp(signedTx.tx);
+        } else if (txType == TransactionType.DumpFees) {
+            DumpFees memory txn = abi.decode(transaction[1:], (DumpFees));
+            IOffchainBook(books[txn.productId]).dumpFees();
         } else {
             revert("Invalid transaction type");
         }

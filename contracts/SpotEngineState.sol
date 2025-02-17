@@ -113,9 +113,10 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
                     config.interestSmallCapX18 +
                     config.interestLargeCapX18.mul(
                         (
-                            (ONE - utilizationRatioX18).div(
-                                ONE - config.interestInflectionUtilX18
-                            )
+                            (utilizationRatioX18 -
+                                config.interestInflectionUtilX18).div(
+                                    ONE - config.interestInflectionUtilX18
+                                )
                         )
                     );
             }

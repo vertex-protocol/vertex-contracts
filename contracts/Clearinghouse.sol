@@ -133,8 +133,8 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         return subaccountOwner[subaccountId];
     }
 
-    function getInsurance() external view returns (int256) {
-        return insuranceX18.toInt();
+    function getInsuranceX18() external view returns (int256) {
+        return insuranceX18;
     }
 
     /// @notice grab total subaccount health
@@ -333,21 +333,25 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         productId = numProducts++;
         risks[productId] = riskStore;
 
+        require(
+            (engineType == IProductEngine.EngineType.SPOT &&
+                healthGroups[healthGroup].spotId == 0) ||
+                (engineType == IProductEngine.EngineType.PERP &&
+                    healthGroups[healthGroup].perpId == 0),
+            ERR_ALREADY_REGISTERED
+        );
+
         if (engineType == IProductEngine.EngineType.SPOT) {
-            require(
-                healthGroups[healthGroup].spotId == 0,
-                ERR_ALREADY_REGISTERED
-            );
             healthGroups[healthGroup].spotId = productId;
         } else {
-            require(
-                healthGroups[healthGroup].perpId == 0,
-                ERR_ALREADY_REGISTERED
-            );
             healthGroups[healthGroup].perpId = productId;
         }
 
         if (healthGroup > maxHealthGroup) {
+            require(
+                healthGroup == maxHealthGroup + 1,
+                ERR_INVALID_HEALTH_GROUP
+            );
             maxHealthGroup = healthGroup;
         }
 
@@ -392,6 +396,22 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         // transfer from the endpoint
         handleDepositTransfer(token, msg.sender, uint256(txn.amount));
         emit ModifyCollateral(amountRealized, subaccountId, txn.productId);
+    }
+
+    /// @notice control insurance balance, only callable by owner
+    function depositInsurance(IEndpoint.DepositInsurance calldata txn)
+        external
+        virtual
+        onlyEndpoint
+    {
+        int256 amountX18 = int256(txn.amount);
+        insuranceX18 += amountX18.fromInt();
+        // facilitate transfer
+        handleDepositTransfer(
+            IERC20Base(quote),
+            msg.sender,
+            uint256(txn.amount)
+        );
     }
 
     function handleWithdrawTransfer(
@@ -489,18 +509,6 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         for (uint256 i = 0; i < txn.subaccountIds.length; ++i) {
             _settlePnl(txn.subaccountIds[i]);
         }
-    }
-
-    /// @notice control insurance balance, only callable by owner
-    function depositInsurance(IEndpoint.DepositInsurance calldata txn)
-        external
-        virtual
-        onlyEndpoint
-    {
-        int256 amountX18 = int256(txn.amount).fromInt();
-        insuranceX18 += amountX18;
-        // facilitate transfer
-        handleDepositTransfer(IERC20Base(quote), txn.sender, txn.amount);
     }
 
     /**
@@ -655,22 +663,15 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         int256 liquidationAmountX18
     ) internal pure {
         require(
-            originalBalanceX18 != 0 && liquidationAmountX18 != 0,
+            (originalBalanceX18 != 0 && liquidationAmountX18 != 0) &&
+                ((liquidationAmountX18 > 0 &&
+                    originalBalanceX18 >= liquidationAmountX18 &&
+                    originalBalanceX18 > 0) ||
+                    (liquidationAmountX18 <= 0 &&
+                        originalBalanceX18 <= liquidationAmountX18 &&
+                        originalBalanceX18 < 0)),
             ERR_NOT_LIQUIDATABLE_AMT
         );
-        if (liquidationAmountX18 > 0) {
-            require(
-                originalBalanceX18 >= liquidationAmountX18 &&
-                    originalBalanceX18 > 0,
-                ERR_NOT_LIQUIDATABLE_AMT
-            );
-        } else {
-            require(
-                originalBalanceX18 <= liquidationAmountX18 &&
-                    originalBalanceX18 < 0,
-                ERR_NOT_LIQUIDATABLE_AMT
-            );
-        }
     }
 
     struct LiquidationVars {

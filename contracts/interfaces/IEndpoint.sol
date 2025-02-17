@@ -26,7 +26,8 @@ interface IEndpoint {
         MintLp,
         BurnLp,
         SwapAMM,
-        MatchOrderAMM
+        MatchOrderAMM,
+        DumpFees
     }
 
     /// requires signature from sender
@@ -171,7 +172,6 @@ interface IEndpoint {
     struct DepositInsurance {
         address sender;
         uint256 amount;
-        uint64 nonce;
     }
 
     struct SignedDepositInsurance {
@@ -191,11 +191,17 @@ interface IEndpoint {
         uint64 txUpTo;
     }
 
+    struct DumpFees {
+        uint32 productId;
+    }
+
     function depositCollateral(
         string calldata subaccountName,
         uint32 productId,
         uint256 amount
     ) external;
+
+    function depositInsurance(uint256 amount) external;
 
     function setBook(uint32 productId, address book) external;
 

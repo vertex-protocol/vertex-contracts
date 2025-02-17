@@ -88,7 +88,7 @@ interface IClearinghouseState {
     ) external view returns (int256);
 
     /// @notice Returns the amount of insurance remaining in this clearinghouse
-    function getInsurance() external view returns (int256);
+    function getInsuranceX18() external view returns (int256);
 
     function getRisk(uint32 productId)
         external

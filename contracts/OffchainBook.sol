@@ -122,7 +122,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         int256 newAmountX18 = (amountX18 > 0)
             ? amountX18.mul(keepRateX18)
             : amountX18.div(keepRateX18);
-        return (newAmountX18 - amountX18, newAmountX18);
+        return (amountX18 - newAmountX18, newAmountX18);
     }
 
     struct OrdersInfo {
