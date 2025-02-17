@@ -333,25 +333,21 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         productId = numProducts++;
         risks[productId] = riskStore;
 
-        require(
-            (engineType == IProductEngine.EngineType.SPOT &&
-                healthGroups[healthGroup].spotId == 0) ||
-                (engineType == IProductEngine.EngineType.PERP &&
-                    healthGroups[healthGroup].perpId == 0),
-            ERR_ALREADY_REGISTERED
-        );
-
         if (engineType == IProductEngine.EngineType.SPOT) {
+            require(
+                healthGroups[healthGroup].spotId == 0,
+                ERR_ALREADY_REGISTERED
+            );
             healthGroups[healthGroup].spotId = productId;
         } else {
+            require(
+                healthGroups[healthGroup].perpId == 0,
+                ERR_ALREADY_REGISTERED
+            );
             healthGroups[healthGroup].perpId = productId;
         }
 
         if (healthGroup > maxHealthGroup) {
-            require(
-                healthGroup == maxHealthGroup + 1,
-                ERR_INVALID_HEALTH_GROUP
-            );
             maxHealthGroup = healthGroup;
         }
 
@@ -663,15 +659,22 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         int256 liquidationAmountX18
     ) internal pure {
         require(
-            (originalBalanceX18 != 0 && liquidationAmountX18 != 0) &&
-                ((liquidationAmountX18 > 0 &&
-                    originalBalanceX18 >= liquidationAmountX18 &&
-                    originalBalanceX18 > 0) ||
-                    (liquidationAmountX18 <= 0 &&
-                        originalBalanceX18 <= liquidationAmountX18 &&
-                        originalBalanceX18 < 0)),
+            originalBalanceX18 != 0 && liquidationAmountX18 != 0,
             ERR_NOT_LIQUIDATABLE_AMT
         );
+        if (liquidationAmountX18 > 0) {
+            require(
+                originalBalanceX18 >= liquidationAmountX18 &&
+                    originalBalanceX18 > 0,
+                ERR_NOT_LIQUIDATABLE_AMT
+            );
+        } else {
+            require(
+                originalBalanceX18 <= liquidationAmountX18 &&
+                    originalBalanceX18 < 0,
+                ERR_NOT_LIQUIDATABLE_AMT
+            );
+        }
     }
 
     struct LiquidationVars {

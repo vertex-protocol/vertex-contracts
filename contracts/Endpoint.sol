@@ -215,11 +215,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
 
     function executeSlowModeTransactions(uint32 count) external {
         SlowModeConfig memory _slowModeConfig = slowModeConfig;
-        require(
-            count <= _slowModeConfig.txCount - _slowModeConfig.txUpTo,
-            "invalid count provided"
-        );
-
         while (count > 0) {
             _executeSlowModeTransaction(_slowModeConfig, false);
             --count;

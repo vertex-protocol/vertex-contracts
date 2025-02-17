@@ -58,9 +58,6 @@ string constant ERR_LONG_NAME = "LN";
 // already registered in health group
 string constant ERR_ALREADY_REGISTERED = "AR";
 
-// invalid health group provided
-string constant ERR_INVALID_HEALTH_GROUP = "IHG";
-
 // trying to burn more LP than owned
 string constant ERR_INSUFFICIENT_LP = "ILP";
 

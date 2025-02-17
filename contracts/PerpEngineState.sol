@@ -36,6 +36,7 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         int256 diffX18 = cumulativeFundingAmountX18 -
             balance.lastCumulativeFundingX18;
         int256 deltaQuoteX18 = vQuoteDeltaX18 - diffX18.mul(balance.amountX18);
+        balance.lastCumulativeFundingX18 = cumulativeFundingAmountX18;
 
         // apply delta
         balance.amountX18 += balanceDeltaX18;
