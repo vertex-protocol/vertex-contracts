@@ -17,6 +17,13 @@ interface IAirdrop {
         bytes32[] calldata proof
     ) external;
 
+    function claimAndStake(
+        uint32 epoch,
+        uint256 amount,
+        uint256 totalAmount,
+        bytes32[] calldata proof
+    ) external;
+
     function getClaimed(
         address account
     ) external view returns (uint256[] memory);

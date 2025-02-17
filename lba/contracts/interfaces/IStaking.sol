@@ -50,11 +50,19 @@ interface IStaking {
 
     function stake(uint256 amount) external;
 
+    function stakeAs(address staker, uint256 amount) external;
+
     function withdraw(uint256 amount) external;
 
     function claimVrtx() external;
 
     function claimUsdc() external;
+
+    function claimUsdcAndStake() external;
+
+    function migrateToV2() external;
+
+    function migrateToV2WithNewWallet(address staker) external;
 
     function getWithdrawnVrtxStates(
         address account
@@ -84,4 +92,14 @@ interface IStaking {
     ) external view returns (LastActionTimes memory);
 
     function getWithdrawLockingTime() external view returns (uint64);
+
+    function getEstimatedVrtxToStake(
+        address account
+    ) external returns (uint256);
+
+    function getV2Bonus(address account) external view returns (uint256);
+
+    function getV2StartTime() external view returns (uint64);
+
+    function getV2BonusDeadline() external view returns (uint64);
 }

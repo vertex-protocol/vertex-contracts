@@ -8,10 +8,21 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./interfaces/ILBA.sol";
 import "./interfaces/IEndpoint.sol";
 import "./interfaces/ISanctionsList.sol";
-import "prb-math/contracts/PRBMathUD60x18.sol";
+
+library X18Math {
+    uint256 private constant ONE_X18 = 1000000000000000000;
+
+    function mul(uint256 x, uint256 y) internal pure returns (uint256) {
+        return (x * y) / ONE_X18;
+    }
+
+    function div(uint256 x, uint256 y) internal pure returns (uint256) {
+        return (x * ONE_X18) / y;
+    }
+}
 
 contract LBA is ILBA, OwnableUpgradeable {
-    using PRBMathUD60x18 for uint256;
+    using X18Math for uint256;
 
     uint32 constant QUOTE_PRODUCT_ID = 0;
     uint256 constant SLOW_MODE_FEE = 1_000_000_000_000_000_000; // $1
@@ -319,7 +330,9 @@ contract LBA is ILBA, OwnableUpgradeable {
         address account
     ) public view returns (uint256 lockedLpBalance) {
         Stage stage = getStage();
-        if (stage == Stage.LpVesting) {
+        if (stage < Stage.LpVesting) {
+            lockedLpBalance = _initialLpBalance(account);
+        } else if (stage == Stage.LpVesting) {
             uint64 elpased = uint64(block.timestamp) - config.lpVestStartTime;
             uint64 total = config.lpVestEndTime - config.lpVestStartTime;
             uint64 elpasedInDay = elpased / SECONDS_PER_DAY;

@@ -3,6 +3,8 @@ pragma solidity ^0.8.0;
 
 import "./interfaces/ILBA.sol";
 import "./interfaces/IVesting.sol";
+import "./interfaces/IStaking.sol";
+import "./interfaces/IStakingV2.sol";
 import "./interfaces/IAirdrop.sol";
 import "./interfaces/ISanctionsList.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
@@ -22,6 +24,9 @@ contract Airdrop is OwnableUpgradeable, IAirdrop {
     // tokens will not be claimed after deadline.
     uint64[] public claimingDeadlines;
     mapping(uint32 => mapping(address => uint256)) claimed;
+
+    address staking;
+    address stakingV2;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -43,6 +48,16 @@ contract Airdrop is OwnableUpgradeable, IAirdrop {
         for (uint32 i = 0; i < airdropEpoch; i++) {
             claimingDeadlines.push(0);
         }
+    }
+
+    function registerStakingV2(address _stakingV2) external onlyOwner {
+        require(stakingV2 == address(0), "already registered.");
+        stakingV2 = _stakingV2;
+    }
+
+    function registerStaking(address _staking) external onlyOwner {
+        require(staking == address(0), "already registered.");
+        staking = _staking;
     }
 
     function registerMerkleRoot(
@@ -107,16 +122,40 @@ contract Airdrop is OwnableUpgradeable, IAirdrop {
         uint256 amount,
         uint256 totalAmount,
         bytes32[] calldata proof
+    ) public {
+        _verifyProof(epoch, msg.sender, amount, totalAmount, proof);
+        if (epoch == airdropEpoch) {
+            // airdrop phase
+            require(
+                ILBA(lba).getStage() >= ILBA.Stage.LpMinted,
+                "LBA hasn't finished, can't claim to wallet."
+            );
+        }
+        SafeERC20.safeTransfer(IERC20(token), msg.sender, amount);
+    }
+
+    function claimAndStake(
+        uint32 epoch,
+        uint256 amount,
+        uint256 totalAmount,
+        bytes32[] calldata proof
     ) external {
         _verifyProof(epoch, msg.sender, amount, totalAmount, proof);
         if (epoch == airdropEpoch) {
             // airdrop phase
             require(
-                ILBA(lba).getStage() == ILBA.Stage.LpMinted,
+                ILBA(lba).getStage() >= ILBA.Stage.LpMinted,
                 "LBA hasn't finished, can't claim to wallet."
             );
         }
-        SafeERC20.safeTransfer(IERC20(token), msg.sender, amount);
+        uint64 v2StartTime = IStaking(staking).getV2StartTime();
+        if (v2StartTime == 0 || block.timestamp < v2StartTime) {
+            SafeERC20.safeApprove(IERC20(token), staking, amount);
+            IStaking(staking).stakeAs(msg.sender, amount);
+        } else {
+            SafeERC20.safeApprove(IERC20(token), stakingV2, amount);
+            IStakingV2(stakingV2).stakeAs(msg.sender, uint128(amount));
+        }
     }
 
     function distributeRewards(uint256 amount) external onlyOwner {
