@@ -2,8 +2,6 @@
 pragma solidity ^0.8.0;
 
 interface IERC20Base {
-    function decimals() external view returns (uint8);
-
     /**
      * @dev Moves `amount` tokens from the caller's account to `to`.
      *
@@ -31,10 +29,4 @@ interface IERC20Base {
     function increaseAllowance(address spender, uint256 addedValue)
         external
         returns (bool);
-
-    function decreaseAllowance(address spender, uint256 subtractedValue)
-        external
-        returns (bool);
-
-    function balanceOf(address account) external view returns (uint256);
 }

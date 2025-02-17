@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
+import "prb-math/contracts/PRBMathSD59x18.sol";
 import "hardhat/console.sol";
 
 import "./common/Constants.sol";
@@ -9,21 +10,20 @@ import "./interfaces/engine/IProductEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./libraries/MathHelper.sol";
-import "./libraries/MathSD21x18.sol";
 import "./BaseEngine.sol";
 import "./PerpEngineLp.sol";
 
 contract PerpEngine is PerpEngineLp {
-    using MathSD21x18 for int128;
+    using PRBMathSD59x18 for int256;
 
     function initialize(
         address _clearinghouse,
-        address _offchainExchange,
-        address,
+        address _quote,
         address _endpoint,
-        address _admin
+        address _admin,
+        address _fees
     ) external {
-        _initialize(_clearinghouse, _offchainExchange, _endpoint, _admin);
+        _initialize(_clearinghouse, _quote, _endpoint, _admin, _fees);
     }
 
     function getEngineType() external pure returns (EngineType) {
@@ -36,28 +36,32 @@ contract PerpEngine is PerpEngineLp {
 
     /// @notice adds a new product with default parameters
     function addProduct(
-        uint32 productId,
+        uint32 healthGroup,
         address book,
-        int128 sizeIncrement,
-        int128 minSize,
-        int128 lpSpreadX18,
-        RiskHelper.RiskStore calldata riskStore
+        int256 sizeIncrement,
+        int256 priceIncrementX18,
+        int256 lpSpreadX18,
+        IClearinghouseState.RiskStore calldata riskStore
     ) public onlyOwner {
-        _addProductForId(
-            productId,
-            QUOTE_PRODUCT_ID,
+        require(
+            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
+            ERR_BAD_PRODUCT_CONFIG
+        );
+        uint32 productId = _addProductForId(
+            healthGroup,
+            riskStore,
             book,
             sizeIncrement,
-            minSize,
-            lpSpreadX18,
-            riskStore
+            priceIncrementX18,
+            lpSpreadX18
         );
 
         states[productId] = State({
-            cumulativeFundingLongX18: 0,
-            cumulativeFundingShortX18: 0,
-            availableSettle: 0,
-            openInterest: 0
+            cumulativeFundingLongX18: ONE,
+            cumulativeFundingShortX18: ONE,
+            availableSettleX18: 0,
+            openInterestX18: 0
         });
 
         lpStates[productId] = LpState({
@@ -71,216 +75,175 @@ contract PerpEngine is PerpEngineLp {
 
     /// @notice changes the configs of a product, if a new book is provided
     /// also clears the book
-    function updateProduct(bytes calldata rawTxn) external onlyEndpoint {
-        UpdateProductTx memory txn = abi.decode(rawTxn, (UpdateProductTx));
-        RiskHelper.RiskStore memory riskStore = txn.riskStore;
+    //    function changeProductConfigs(
+    //        uint32 productId,
+    //        int256 sizeIncrement,
+    //        int256 priceIncrementX18,
+    //        address book,
+    //        Config calldata config
+    //    ) public onlyOwner {
+    //        require(
+    //            config.longWeightInitialX18 < config.longWeightMaintenanceX18 &&
+    //                config.shortWeightInitialX18 > config.shortWeightMaintenanceX18,
+    //            ERR_BAD_PRODUCT_CONFIG
+    //        );
+    //        if (book != address(0)) {
+    //            // full wipe
+    //            delete markets[productId];
+    //
+    //            markets[productId] = IOffchainBook(book);
+    //            markets[productId].initialize(
+    //                _clearinghouse,
+    //                this,
+    //                owner(),
+    //                getEndpoint(),
+    //                _fees,
+    //                productId,
+    //                sizeIncrement,
+    //                priceIncrementX18
+    //            );
+    //
+    //            products[productId].config = config;
+    //        } else {
+    //            // we don't update sizeincrement and priceincrement if we aren't also wiping book
+    //            products[productId].config = config;
+    //        }
+    //    }
 
-        require(
-            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial >=
-                riskStore.shortWeightMaintenance,
-            ERR_BAD_PRODUCT_CONFIG
-        );
-
-        RiskHelper.RiskStore memory r = _risk().value[txn.productId];
-        r.longWeightInitial = riskStore.longWeightInitial;
-        r.shortWeightInitial = riskStore.shortWeightInitial;
-        r.longWeightMaintenance = riskStore.longWeightMaintenance;
-        r.shortWeightMaintenance = riskStore.shortWeightMaintenance;
-        _risk().value[txn.productId] = r;
-
-        _exchange().updateMarket(
-            txn.productId,
-            type(uint32).max,
-            address(0),
-            txn.sizeIncrement,
-            txn.minSize,
-            txn.lpSpreadX18
-        );
-    }
-
-    function updateBalance(
-        uint32 productId,
-        bytes32 subaccount,
-        int128 amountDelta,
-        int128 vQuoteDelta
-    ) external {
-        // Only a market book can apply deltas
-        _assertInternal();
-        State memory state = states[productId];
-        Balance memory balance = balances[productId][subaccount];
-
-        _updateBalance(state, balance, amountDelta, vQuoteDelta);
-
-        states[productId] = state;
-        balances[productId][subaccount] = balance;
-        _balanceUpdate(productId, subaccount);
-    }
-
-    function settlePnl(bytes32 subaccount, uint256 productIds)
+    /// @notice updates internal balances; given tuples of (product, subaccount, delta)
+    /// since tuples aren't a thing in solidity, params specify the transpose
+    function applyDeltas(IProductEngine.ProductDelta[] calldata deltas)
         external
-        returns (int128)
     {
-        _assertInternal();
-        int128 totalSettled = 0;
+        // Only a market book can apply deltas
+        checkCanApplyDeltas();
 
-        while (productIds != 0) {
-            uint32 productId = uint32(productIds & ((1 << 32) - 1));
-            // otherwise it means the product is a spot.
-            if (productId % 2 == 0) {
-                (
-                    int128 canSettle,
-                    LpState memory lpState,
-                    LpBalance memory lpBalance,
-                    State memory state,
-                    Balance memory balance
-                ) = getSettlementState(productId, subaccount);
+        // May load the same product multiple times
+        for (uint32 i = 0; i < deltas.length; i++) {
+            uint32 productId = deltas[i].productId;
+            // For perps, quote deltas are applied in `vQuoteDeltaX18`
+            if (
+                productId == QUOTE_PRODUCT_ID ||
+                (deltas[i].amountDeltaX18 == 0 && deltas[i].vQuoteDeltaX18 == 0)
+            ) {
+                continue;
+            }
 
-                state.availableSettle -= canSettle;
-                balance.vQuoteBalance -= canSettle;
+            uint64 subaccountId = deltas[i].subaccountId;
+            int256 amountDeltaX18 = deltas[i].amountDeltaX18;
+            int256 vQuoteDeltaX18 = deltas[i].vQuoteDeltaX18;
 
-                totalSettled += canSettle;
+            State memory state = states[productId];
+            Balance memory balance = balances[productId][subaccountId];
+
+            _updateBalance(state, balance, amountDeltaX18, vQuoteDeltaX18);
+
+            states[productId] = state;
+            balances[productId][subaccountId] = balance;
+
+            emit ProductUpdate(productId);
+        }
+    }
+
+    function settlePnl(uint64 subaccountId) external returns (int256) {
+        require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
+        int256 totalSettledX18 = 0;
+
+        for (uint256 i = 0; i < productIds.length; ++i) {
+            uint32 productId = productIds[i];
+            (
+                int256 canSettleX18,
+                LpState memory lpState,
+                LpBalance memory lpBalance,
+                State memory state,
+                Balance memory balance
+            ) = getSettlementState(productId, subaccountId);
+
+            if (canSettleX18.abs() > 0) {
+                // Product and balance updates in getSettlementState
+                state.availableSettleX18 -= canSettleX18;
+                balance.vQuoteBalanceX18 -= canSettleX18;
+
+                totalSettledX18 += canSettleX18;
 
                 lpStates[productId] = lpState;
                 states[productId] = state;
-                lpBalances[productId][subaccount] = lpBalance;
-                balances[productId][subaccount] = balance;
-                _balanceUpdate(productId, subaccount);
+                lpBalances[productId][subaccountId] = lpBalance;
+                balances[productId][subaccountId] = balance;
+                emit SettlePnl(subaccountId, productId, canSettleX18.toInt());
             }
-            productIds >>= 32;
         }
-        return totalSettled;
+
+        return totalSettledX18;
     }
 
-    function calculatePositionPnl(
-        LpState memory lpState,
-        LpBalance memory lpBalance,
-        Balance memory balance,
-        uint32 productId
-    ) internal view returns (int128 positionPnl) {
-        int128 priceX18 = _risk(productId).priceX18;
-
-        (int128 ammBase, int128 ammQuote) = MathHelper.ammEquilibrium(
-            lpState.base,
-            lpState.quote,
-            priceX18
-        );
-
-        if (lpBalance.amount == 0) {
-            positionPnl = priceX18.mul(balance.amount) + balance.vQuoteBalance;
-        } else {
-            positionPnl =
-                priceX18.mul(
-                    balance.amount +
-                        ammBase.mul(lpBalance.amount).div(lpState.supply)
-                ) +
-                balance.vQuoteBalance +
-                ammQuote.mul(lpBalance.amount).div(lpState.supply);
-        }
-    }
-
-    function getPositionPnl(uint32 productId, bytes32 subaccount)
-        external
-        view
-        returns (int128)
-    {
-        (
-            LpState memory lpState,
-            LpBalance memory lpBalance,
-            ,
-            Balance memory balance
-        ) = getStatesAndBalances(productId, subaccount);
-
-        return calculatePositionPnl(lpState, lpBalance, balance, productId);
-    }
-
-    function getSettlementState(uint32 productId, bytes32 subaccount)
+    function getSettlementState(uint32 productId, uint64 subaccountId)
         public
         view
         returns (
-            int128 availableSettle,
+            int256 availableSettleX18,
             LpState memory lpState,
             LpBalance memory lpBalance,
             State memory state,
             Balance memory balance
         )
     {
+        int256 priceX18 = getOraclePriceX18(productId);
         (lpState, lpBalance, state, balance) = getStatesAndBalances(
             productId,
-            subaccount
+            subaccountId
         );
 
-        availableSettle = MathHelper.min(
-            calculatePositionPnl(lpState, lpBalance, balance, productId),
-            state.availableSettle
+        (int256 ammBaseX18, int256 ammQuoteX18) = MathHelper.ammEquilibrium(
+            lpState.base.fromInt(),
+            lpState.quote.fromInt(),
+            priceX18
+        );
+
+        int256 positionPnlX18 = priceX18.mul(balance.amountX18 + ammBaseX18) +
+            balance.vQuoteBalanceX18 +
+            ammQuoteX18;
+
+        availableSettleX18 = MathHelper.min(
+            positionPnlX18,
+            state.availableSettleX18
         );
     }
 
-    function socializeSubaccount(bytes32 subaccount, int128 insurance)
+    function socializeSubaccount(uint64 subaccountId, int256 insuranceX18)
         external
-        returns (int128)
+        returns (int256)
     {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
-        uint32[] memory _productIds = getProductIds();
-        for (uint128 i = 0; i < _productIds.length; ++i) {
-            uint32 productId = _productIds[i];
+        for (uint256 i = 0; i < productIds.length; ++i) {
+            uint32 productId = productIds[i];
             (State memory state, Balance memory balance) = getStateAndBalance(
                 productId,
-                subaccount
+                subaccountId
             );
-            if (balance.vQuoteBalance < 0) {
-                int128 insuranceCover = MathHelper.min(
-                    insurance,
-                    -balance.vQuoteBalance
+            if (balance.vQuoteBalanceX18 < 0) {
+                int256 insuranceCoverX18 = MathHelper.max(
+                    insuranceX18,
+                    -balance.vQuoteBalanceX18
                 );
-                insurance -= insuranceCover;
-                balance.vQuoteBalance += insuranceCover;
-                state.availableSettle += insuranceCover;
+                insuranceX18 -= insuranceCoverX18;
+                balance.vQuoteBalanceX18 += insuranceCoverX18;
 
                 // actually socialize if still not enough
-                if (balance.vQuoteBalance < 0) {
+                if (balance.vQuoteBalanceX18 < 0) {
                     // socialize across all other participants
-                    int128 fundingPerShare = -balance.vQuoteBalance.div(
-                        state.openInterest
+                    int256 fundingPerShareX18 = -balance.vQuoteBalanceX18.div(
+                        state.openInterestX18
                     ) / 2;
-                    state.cumulativeFundingLongX18 += fundingPerShare;
-                    state.cumulativeFundingShortX18 -= fundingPerShare;
-
-                    LpState memory lpState = lpStates[productId];
-                    Balance memory tmp = Balance({
-                        amount: lpState.base,
-                        vQuoteBalance: 0,
-                        lastCumulativeFundingX18: lpState
-                            .lastCumulativeFundingX18
-                    });
-                    _updateBalance(state, tmp, 0, 0);
-                    if (lpState.supply != 0) {
-                        lpState.cumulativeFundingPerLpX18 += tmp
-                            .vQuoteBalance
-                            .div(lpState.supply);
-                    }
-                    lpState.lastCumulativeFundingX18 = state
-                        .cumulativeFundingLongX18;
-
-                    lpStates[productId] = lpState;
-                    balance.vQuoteBalance = 0;
+                    state.cumulativeFundingLongX18 += fundingPerShareX18;
+                    state.cumulativeFundingShortX18 -= fundingPerShareX18;
+                    balance.vQuoteBalanceX18 = 0;
+                    emit SocializeProduct(productId, -balance.vQuoteBalanceX18);
                 }
-                states[productId] = state;
-                balances[productId][subaccount] = balance;
-                _balanceUpdate(productId, subaccount);
+                balances[productId][subaccountId] = balance;
             }
         }
-        return insurance;
-    }
-
-    function manualAssert(int128[] calldata openInterests) external view {
-        for (uint128 i = 0; i < openInterests.length; ++i) {
-            uint32 productId = productIds[i];
-            require(
-                states[productId].openInterest == openInterests[i],
-                ERR_DSYNC
-            );
-        }
+        return insuranceX18;
     }
 }

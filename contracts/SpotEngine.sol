@@ -1,28 +1,28 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
+import "prb-math/contracts/PRBMathSD59x18.sol";
 import "./common/Constants.sol";
 import "./common/Errors.sol";
+import "./interfaces/IOffchainBook.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./libraries/MathHelper.sol";
-import "./libraries/MathSD21x18.sol";
-import "./libraries/RiskHelper.sol";
 import "./BaseEngine.sol";
 import "./SpotEngineState.sol";
 import "./SpotEngineLP.sol";
 
 contract SpotEngine is SpotEngineLP {
-    using MathSD21x18 for int128;
+    using PRBMathSD59x18 for int256;
 
     function initialize(
         address _clearinghouse,
-        address _offchainExchange,
         address _quote,
         address _endpoint,
-        address _admin
+        address _admin,
+        address _fees
     ) external {
-        _initialize(_clearinghouse, _offchainExchange, _endpoint, _admin);
+        _initialize(_clearinghouse, _quote, _endpoint, _admin, _fees);
 
         configs[QUOTE_PRODUCT_ID] = Config({
             token: _quote,
@@ -31,18 +31,11 @@ contract SpotEngine is SpotEngineLP {
             interestSmallCapX18: 4e16, // .04
             interestLargeCapX18: ONE // 1
         });
-        _risk().value[QUOTE_PRODUCT_ID] = RiskHelper.RiskStore({
-            longWeightInitial: 1e9,
-            shortWeightInitial: 1e9,
-            longWeightMaintenance: 1e9,
-            shortWeightMaintenance: 1e9,
-            priceX18: ONE
-        });
         states[QUOTE_PRODUCT_ID] = State({
             cumulativeDepositsMultiplierX18: ONE,
             cumulativeBorrowsMultiplierX18: ONE,
-            totalDepositsNormalized: 0,
-            totalBorrowsNormalized: 0
+            totalDepositsNormalizedX18: 0,
+            totalBorrowsNormalizedX18: 0
         });
         productIds.push(QUOTE_PRODUCT_ID);
         emit AddProduct(QUOTE_PRODUCT_ID);
@@ -66,239 +59,144 @@ contract SpotEngine is SpotEngineLP {
 
     /// @notice adds a new product with default parameters
     function addProduct(
-        uint32 productId,
-        uint32 quoteId,
+        uint32 healthGroup,
         address book,
-        int128 sizeIncrement,
-        int128 minSize,
-        int128 lpSpreadX18,
+        int256 sizeIncrement,
+        int256 priceIncrementX18,
+        int256 lpSpreadX18,
         Config calldata config,
-        RiskHelper.RiskStore calldata riskStore
+        IClearinghouseState.RiskStore calldata riskStore
     ) public onlyOwner {
-        require(productId != QUOTE_PRODUCT_ID);
-        _addProductForId(
-            productId,
-            quoteId,
+        require(
+            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
+            ERR_BAD_PRODUCT_CONFIG
+        );
+        uint32 productId = _addProductForId(
+            healthGroup,
+            riskStore,
             book,
             sizeIncrement,
-            minSize,
-            lpSpreadX18,
-            riskStore
+            priceIncrementX18,
+            lpSpreadX18
         );
 
         configs[productId] = config;
         states[productId] = State({
             cumulativeDepositsMultiplierX18: ONE,
             cumulativeBorrowsMultiplierX18: ONE,
-            totalDepositsNormalized: 0,
-            totalBorrowsNormalized: 0
+            totalDepositsNormalizedX18: 0,
+            totalBorrowsNormalizedX18: 0
         });
 
         lpStates[productId] = LpState({
             supply: 0,
-            quote: Balance({amount: 0, lastCumulativeMultiplierX18: ONE}),
-            base: Balance({amount: 0, lastCumulativeMultiplierX18: ONE})
+            quote: Balance({amountX18: 0, lastCumulativeMultiplierX18: ONE}),
+            base: Balance({amountX18: 0, lastCumulativeMultiplierX18: ONE})
         });
     }
 
-    function updateProduct(bytes calldata rawTxn) external onlyEndpoint {
-        UpdateProductTx memory txn = abi.decode(rawTxn, (UpdateProductTx));
-        RiskHelper.RiskStore memory riskStore = txn.riskStore;
+    /// @notice changes the configs of a product, if a new book is provided
+    /// also clears the book
+    //    function changeProductConfigs(
+    //        uint32 productId,
+    //        int256 sizeIncrement,
+    //        int256 priceIncrementX18,
+    //        address book,
+    //        Config calldata config
+    //    ) public onlyOwner {
+    //        require(
+    //            config.longWeightInitialX18 < config.longWeightMaintenanceX18 &&
+    //                config.shortWeightInitialX18 > config.shortWeightMaintenanceX18,
+    //            ERR_BAD_PRODUCT_CONFIG
+    //        );
+    //        if (book != address(0)) {
+    //            // full wipe
+    //            delete markets[productId];
+    //
+    //            markets[productId] = IOffchainBook(book);
+    //            markets[productId].initialize(
+    //                _clearinghouse,
+    //                this,
+    //                owner(),
+    //                getEndpoint(),
+    //                _fees,
+    //                productId,
+    //                sizeIncrement,
+    //                priceIncrementX18
+    //            );
+    //
+    //            products[productId].config = config;
+    //        } else {
+    //            // we don't update sizeincrement and priceincrement if we aren't also wiping book
+    //            products[productId].config = config;
+    //        }
+    //    }
 
-        if (txn.productId != QUOTE_PRODUCT_ID) {
-            require(
-                riskStore.longWeightInitial <=
-                    riskStore.longWeightMaintenance &&
-                    riskStore.shortWeightInitial >=
-                    riskStore.shortWeightMaintenance &&
-                    configs[txn.productId].token == txn.config.token,
-                ERR_BAD_PRODUCT_CONFIG
-            );
+    /// @notice updates internal balances; given tuples of (product, subaccount, delta)
+    /// since tuples aren't a thing in solidity, params specify the transpose
+    function applyDeltas(ProductDelta[] calldata deltas) external {
+        checkCanApplyDeltas();
 
-            RiskHelper.RiskStore memory r = _risk().value[txn.productId];
-            r.longWeightInitial = riskStore.longWeightInitial;
-            r.shortWeightInitial = riskStore.shortWeightInitial;
-            r.longWeightMaintenance = riskStore.longWeightMaintenance;
-            r.shortWeightMaintenance = riskStore.shortWeightMaintenance;
-            _risk().value[txn.productId] = r;
+        // May load the same product multiple times
+        for (uint32 i = 0; i < deltas.length; i++) {
+            if (deltas[i].amountDeltaX18 == 0) {
+                continue;
+            }
 
-            _exchange().updateMarket(
-                txn.productId,
-                type(uint32).max,
-                address(0),
-                txn.sizeIncrement,
-                txn.minSize,
-                txn.lpSpreadX18
-            );
+            uint32 productId = deltas[i].productId;
+            uint64 subaccountId = deltas[i].subaccountId;
+            int256 amountDeltaX18 = deltas[i].amountDeltaX18;
+            State memory state = states[productId];
+            Balance memory balance = balances[productId][subaccountId];
+
+            _updateBalance(state, balance, amountDeltaX18);
+
+            states[productId] = state;
+            balances[productId][subaccountId] = balance;
+
+            emit ProductUpdate(productId);
         }
-
-        configs[txn.productId] = txn.config;
     }
 
-    function updateQuoteFromInsurance(bytes32 subaccount, int128 insurance)
+    function socializeSubaccount(uint64 subaccountId, int256 insuranceX18)
         external
-        returns (int128)
+        returns (int256)
     {
-        _assertInternal();
-        State memory state = states[QUOTE_PRODUCT_ID];
-        BalanceNormalized memory balanceNormalized = balances[QUOTE_PRODUCT_ID][
-            subaccount
-        ].balance;
-        int128 balanceAmount = balanceNormalizedToBalance(
-            state,
-            balanceNormalized
-        ).amount;
-        if (balanceAmount < 0) {
-            int128 topUpAmount = MathHelper.max(
-                MathHelper.min(insurance, -balanceAmount),
-                0
-            );
-            insurance -= topUpAmount;
-            _updateBalanceNormalized(state, balanceNormalized, topUpAmount);
-        }
-        states[QUOTE_PRODUCT_ID] = state;
-        balances[QUOTE_PRODUCT_ID][subaccount].balance = balanceNormalized;
-        return insurance;
-    }
-
-    function updateBalance(
-        uint32 productId,
-        bytes32 subaccount,
-        int128 amountDelta,
-        int128 quoteDelta
-    ) external {
-        require(productId != QUOTE_PRODUCT_ID, ERR_INVALID_PRODUCT);
-        _assertInternal();
-        State memory state = states[productId];
-        State memory quoteState = states[QUOTE_PRODUCT_ID];
-
-        BalanceNormalized memory balance = balances[productId][subaccount]
-            .balance;
-
-        BalanceNormalized memory quoteBalance = balances[QUOTE_PRODUCT_ID][
-            subaccount
-        ].balance;
-
-        _updateBalanceNormalized(state, balance, amountDelta);
-        _updateBalanceNormalized(quoteState, quoteBalance, quoteDelta);
-
-        balances[productId][subaccount].balance = balance;
-        balances[QUOTE_PRODUCT_ID][subaccount].balance = quoteBalance;
-
-        states[productId] = state;
-        states[QUOTE_PRODUCT_ID] = quoteState;
-
-        _balanceUpdate(productId, subaccount);
-        _balanceUpdate(QUOTE_PRODUCT_ID, subaccount);
-    }
-
-    function updateBalance(
-        uint32 productId,
-        bytes32 subaccount,
-        int128 amountDelta
-    ) external {
-        _assertInternal();
-
-        State memory state = states[productId];
-
-        BalanceNormalized memory balance = balances[productId][subaccount]
-            .balance;
-        _updateBalanceNormalized(state, balance, amountDelta);
-        balances[productId][subaccount].balance = balance;
-
-        states[productId] = state;
-        _balanceUpdate(productId, subaccount);
-    }
-
-    // only check on withdraw -- ensure that users can't withdraw
-    // funds that are in the Vertex contract but not officially
-    // 'deposited' into the Vertex system and counted in balances
-    // (i.e. if a user transfers tokens to the clearinghouse
-    // without going through the standard deposit)
-    function assertUtilization(uint32 productId) external view {
-        (State memory _state, ) = getStateAndBalance(productId, X_ACCOUNT);
-        int128 totalDeposits = _state.totalDepositsNormalized.mul(
-            _state.cumulativeDepositsMultiplierX18
-        );
-        int128 totalBorrows = _state.totalBorrowsNormalized.mul(
-            _state.cumulativeBorrowsMultiplierX18
-        );
-        require(totalDeposits >= totalBorrows, ERR_MAX_UTILIZATION);
-    }
-
-    function socializeSubaccount(bytes32 subaccount) external {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
-        uint32[] memory _productIds = getProductIds();
-        for (uint128 i = 0; i < _productIds.length; ++i) {
-            uint32 productId = _productIds[i];
+        // if the insurance fund still has value we shouldn't socialize
+        // instead whatever remaining spot should be liquidated
+        if (insuranceX18 > 0) {
+            return insuranceX18;
+        }
 
-            State memory state = states[productId];
-            Balance memory balance = balanceNormalizedToBalance(
-                state,
-                balances[productId][subaccount].balance
+        for (uint256 i = 0; i < productIds.length; ++i) {
+            uint32 productId = productIds[i];
+            (State memory state, Balance memory balance) = getStateAndBalance(
+                productId,
+                subaccountId
             );
-            if (balance.amount < 0) {
-                int128 totalDeposited = state.totalDepositsNormalized.mul(
+            if (balance.amountX18 < 0) {
+                int256 totalDepositedX18 = state.totalDepositsNormalizedX18.mul(
                     state.cumulativeDepositsMultiplierX18
                 );
 
-                state.cumulativeDepositsMultiplierX18 = (totalDeposited +
-                    balance.amount).div(state.totalDepositsNormalized);
+                state.cumulativeDepositsMultiplierX18 = (totalDepositedX18 +
+                    balance.amountX18).div(state.totalDepositsNormalizedX18);
 
-                require(state.cumulativeDepositsMultiplierX18 > 0);
+                emit SocializeProduct(productId, -balance.amountX18);
 
-                state.totalBorrowsNormalized += balance.amount.div(
+                state.totalBorrowsNormalizedX18 -= balance.amountX18.div(
                     state.cumulativeBorrowsMultiplierX18
                 );
+                balance.amountX18 = 0;
 
-                balances[productId][subaccount].balance.amountNormalized = 0;
-
-                if (productId == QUOTE_PRODUCT_ID) {
-                    for (uint32 j = 0; j < _productIds.length; ++j) {
-                        uint32 baseProductId = _productIds[j];
-                        if (baseProductId == QUOTE_PRODUCT_ID) {
-                            continue;
-                        }
-                        LpState memory lpState = lpStates[baseProductId];
-                        _updateBalanceWithoutDelta(state, lpState.quote);
-                        lpStates[baseProductId] = lpState;
-                        _productUpdate(baseProductId);
-                    }
-                } else {
-                    LpState memory lpState = lpStates[productId];
-                    _updateBalanceWithoutDelta(state, lpState.base);
-                    lpStates[productId] = lpState;
-                }
+                balances[productId][subaccountId] = balance;
                 states[productId] = state;
-                _balanceUpdate(productId, subaccount);
             }
         }
-    }
 
-    function manualAssert(
-        int128[] calldata totalDeposits,
-        int128[] calldata totalBorrows
-    ) external view {
-        for (uint128 i = 0; i < totalDeposits.length; ++i) {
-            uint32 productId = productIds[i];
-            State memory state = states[productId];
-            require(
-                state.totalDepositsNormalized.mul(
-                    state.cumulativeDepositsMultiplierX18
-                ) == totalDeposits[i],
-                ERR_DSYNC
-            );
-            require(
-                state.totalBorrowsNormalized.mul(
-                    state.cumulativeBorrowsMultiplierX18
-                ) == totalBorrows[i],
-                ERR_DSYNC
-            );
-        }
-    }
-
-    function getToken(uint32 productId) external view returns (address) {
-        return address(configs[productId].token);
+        return insuranceX18;
     }
 }

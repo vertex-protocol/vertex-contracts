@@ -2,64 +2,42 @@
 pragma solidity ^0.8.0;
 
 import "./IProductEngine.sol";
-import "../../libraries/RiskHelper.sol";
 
 interface IPerpEngine is IProductEngine {
-    event FundingPayment(
-        uint32 productId,
-        uint128 dt,
-        int128 openInterest,
-        int128 payment
-    );
-
     struct State {
-        int128 cumulativeFundingLongX18;
-        int128 cumulativeFundingShortX18;
-        int128 availableSettle;
-        int128 openInterest;
+        int256 cumulativeFundingLongX18;
+        int256 cumulativeFundingShortX18;
+        int256 availableSettleX18;
+        int256 openInterestX18;
     }
 
     struct Balance {
-        int128 amount;
-        int128 vQuoteBalance;
-        int128 lastCumulativeFundingX18;
+        int256 amountX18;
+        int256 vQuoteBalanceX18;
+        int256 lastCumulativeFundingX18;
     }
 
     struct LpState {
-        int128 supply;
-        // TODO: this should be removed; we can just get it from State.cumulativeFundingLongX18
-        int128 lastCumulativeFundingX18;
-        int128 cumulativeFundingPerLpX18;
-        int128 base;
-        int128 quote;
+        int256 supply;
+        int256 lastCumulativeFundingX18;
+        int256 cumulativeFundingPerLpX18;
+        int256 base;
+        int256 quote;
     }
 
     struct LpBalance {
-        int128 amount;
+        int256 amountX18;
         // NOTE: funding payments should be rolled
-        // into Balance.vQuoteBalance;
-        int128 lastCumulativeFundingX18;
+        // into Balance.vQuoteBalanceX18;
+        int256 lastCumulativeFundingX18;
     }
 
-    struct UpdateProductTx {
-        uint32 productId;
-        int128 sizeIncrement;
-        int128 minSize;
-        int128 lpSpreadX18;
-        RiskHelper.RiskStore riskStore;
-    }
-
-    function getStateAndBalance(uint32 productId, bytes32 subaccount)
+    function getStateAndBalance(uint32 productId, uint64 subaccountId)
         external
         view
         returns (State memory, Balance memory);
 
-    function getBalance(uint32 productId, bytes32 subaccount)
-        external
-        view
-        returns (Balance memory);
-
-    function getStatesAndBalances(uint32 productId, bytes32 subaccount)
+    function getStatesAndBalances(uint32 productId, uint64 subaccountId)
         external
         view
         returns (
@@ -69,39 +47,22 @@ interface IPerpEngine is IProductEngine {
             Balance memory
         );
 
-    /// @dev Returns amount settled and emits SettlePnl events for each product
-    function settlePnl(bytes32 subaccount, uint256 productIds)
-        external
-        returns (int128);
+    /// @dev Returns amount settled in X18 and emits SettlePnl events for each product
+    function settlePnl(uint64 subaccountId) external returns (int256);
 
-    function getSettlementState(uint32 productId, bytes32 subaccount)
+    /// @notice Emitted during perp settlement
+    event SettlePnl(uint64 indexed subaccount, uint32 productId, int256 amount);
+
+    function getSettlementState(uint32 productId, uint64 subaccountId)
         external
         view
         returns (
-            int128 availableSettle,
+            int256 availableSettleX18,
             LpState memory lpState,
             LpBalance memory lpBalance,
             State memory state,
             Balance memory balance
         );
 
-    function updateBalance(
-        uint32 productId,
-        bytes32 subaccount,
-        int128 amountDelta,
-        int128 vQuoteDelta
-    ) external;
-
-    function updateStates(uint128 dt, int128[] calldata avgPriceDiffs) external;
-
-    function manualAssert(int128[] calldata openInterests) external view;
-
-    function getPositionPnl(uint32 productId, bytes32 subaccount)
-        external
-        view
-        returns (int128);
-
-    function socializeSubaccount(bytes32 subaccount, int128 insurance)
-        external
-        returns (int128);
+    function getMarkPrice(uint32 productId) external view returns (int256);
 }
