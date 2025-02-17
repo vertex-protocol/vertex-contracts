@@ -13,6 +13,12 @@ abstract contract PerpEngineLp is PerpEngineState {
         int256 quoteAmountHighX18
     ) external {
         checkCanApplyDeltas();
+        require(
+            amountBaseX18 > 0 &&
+                quoteAmountLowX18 > 0 &&
+                quoteAmountHighX18 > 0,
+            ERR_INVALID_LP_AMOUNT
+        );
 
         (
             LpState memory lpState,
@@ -22,7 +28,7 @@ abstract contract PerpEngineLp is PerpEngineState {
         ) = getStatesAndBalances(productId, subaccountId);
 
         int256 amountQuoteX18 = (lpState.base == 0)
-            ? quoteAmountLowX18
+            ? amountBaseX18.mul(getOraclePriceX18(productId)).ceil()
             : amountBaseX18
                 .mul(lpState.quote.fromInt().div(lpState.base.fromInt()))
                 .ceil();
@@ -59,6 +65,7 @@ abstract contract PerpEngineLp is PerpEngineState {
         int256 amountLpX18
     ) public {
         checkCanApplyDeltas();
+        require(amountLpX18 > 0, ERR_INVALID_LP_AMOUNT);
 
         (
             LpState memory lpState,
@@ -79,8 +86,10 @@ abstract contract PerpEngineLp is PerpEngineState {
 
         int256 amountLp = amountLpX18.toInt();
 
-        int256 amountBase = (amountLp * lpState.base) / lpState.supply;
-        int256 amountQuote = (amountLp * lpState.quote) / lpState.supply;
+        int256 amountBase = MathHelper.mul(amountLp, lpState.base) /
+            lpState.supply;
+        int256 amountQuote = MathHelper.mul(amountLp, lpState.quote) /
+            lpState.supply;
 
         state.openInterestX18 -= amountBase.fromInt();
 
@@ -113,14 +122,6 @@ abstract contract PerpEngineLp is PerpEngineState {
         LpState memory lpState = lpStates[productId];
         State memory state = states[productId];
 
-        int256 newMarkPriceX18 = computeNewMarkPrice(
-            productId,
-            lpState,
-            // TODO: this is a temporary hack
-            // need a better way to track mark price
-            1
-        );
-
         (baseSwappedX18, quoteSwappedX18) = MathHelper.swap(
             amount,
             lpState.base,
@@ -136,9 +137,6 @@ abstract contract PerpEngineLp is PerpEngineState {
         lpState.quote += quoteSwappedX18.toInt();
         states[productId] = state;
         lpStates[productId] = lpState;
-
-        markPrices[productId] = newMarkPriceX18;
-        // actual balance updates for the subaccountId happen in OffchainBook
     }
 
     function decomposeLps(uint64 liquidateeId, uint64) external {
@@ -147,29 +145,5 @@ abstract contract PerpEngineLp is PerpEngineState {
             burnLp(productId, liquidateeId, type(int256).max);
         }
         // TODO: transfer some of the burned proceeds to liquidator
-    }
-
-    function computeNewMarkPrice(
-        uint32 productId,
-        LpState memory lpState,
-        uint256 dt
-    ) internal view returns (int256) {
-        // pedantic case:
-        // just return the oracle price if there is no liquidity
-        // in the LP
-        if (lpState.base == 0) {
-            return getOraclePriceX18(productId);
-        }
-        int256 lastMarkPriceX18 = markPrices[productId];
-        int256 currentPriceX18 = lpState.quote.fromInt().div(
-            lpState.base.fromInt()
-        );
-        if (lastMarkPriceX18 == 0) {
-            return currentPriceX18;
-        }
-        int256 factorX18 = EMA_TIME_CONSTANT_X18.pow(int256(dt).fromInt());
-        return
-            lastMarkPriceX18.mul(factorX18) +
-            currentPriceX18.mul(ONE - factorX18);
     }
 }

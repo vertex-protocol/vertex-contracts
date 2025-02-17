@@ -32,7 +32,7 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
     uint32 private numProducts;
 
     // product ID -> engine address
-    mapping(uint32 => IProductEngine) private productToEngine;
+    mapping(uint32 => IProductEngine) internal productToEngine;
     // Type to engine address
     mapping(IProductEngine.EngineType => IProductEngine) engineByType;
     // Supported engine types
@@ -252,39 +252,55 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
                     .mul(healthVars.spotPriceX18 + healthVars.perpPriceX18);
             }
 
-            // apply risk for spot and perp positions
-            int256 combinedSpotX18 = healthVars.spotAmountX18 +
-                healthVars.spotInLpAmountX18;
-            healthX18 += RiskHelper
-                ._getWeightX18(healthVars.spotRisk, combinedSpotX18, healthType)
-                .mul(combinedSpotX18)
-                .mul(healthVars.spotPriceX18);
+            if (group.spotId != 0) {
+                // apply risk for spot and perp positions
+                int256 combinedSpotX18 = healthVars.spotAmountX18 +
+                    healthVars.spotInLpAmountX18;
+                healthX18 += RiskHelper
+                    ._getWeightX18(
+                        healthVars.spotRisk,
+                        combinedSpotX18,
+                        healthType
+                    )
+                    .mul(combinedSpotX18)
+                    .mul(healthVars.spotPriceX18);
+            }
 
-            int256 combinedPerpX18 = healthVars.perpAmountX18 +
-                healthVars.perpInLpAmountX18;
-            healthX18 += RiskHelper
-                ._getWeightX18(healthVars.perpRisk, combinedPerpX18, healthType)
-                .mul(combinedPerpX18)
-                .mul(healthVars.perpPriceX18);
+            if (group.perpId != 0) {
+                int256 combinedPerpX18 = healthVars.perpAmountX18 +
+                    healthVars.perpInLpAmountX18;
+                healthX18 += RiskHelper
+                    ._getWeightX18(
+                        healthVars.perpRisk,
+                        combinedPerpX18,
+                        healthType
+                    )
+                    .mul(combinedPerpX18)
+                    .mul(healthVars.perpPriceX18);
+            }
 
-            // apply penalties on amount in LPs
-            healthX18 -= (ONE -
-                RiskHelper._getWeightX18(
-                    healthVars.spotRisk,
-                    healthVars.spotInLpAmountX18,
-                    healthType
-                )).mul(healthVars.spotInLpAmountX18).mul(
-                    healthVars.spotPriceX18
-                );
+            if (group.spotId != 0) {
+                // apply penalties on amount in LPs
+                healthX18 -= (ONE -
+                    RiskHelper._getWeightX18(
+                        healthVars.spotRisk,
+                        healthVars.spotInLpAmountX18,
+                        healthType
+                    )).mul(healthVars.spotInLpAmountX18).mul(
+                        healthVars.spotPriceX18
+                    );
+            }
 
-            healthX18 -= (ONE -
-                RiskHelper._getWeightX18(
-                    healthVars.perpRisk,
-                    healthVars.perpInLpAmountX18,
-                    healthType
-                )).mul(healthVars.perpInLpAmountX18).mul(
-                    healthVars.perpPriceX18
-                );
+            if (group.perpId != 0) {
+                healthX18 -= (ONE -
+                    RiskHelper._getWeightX18(
+                        healthVars.perpRisk,
+                        healthVars.perpInLpAmountX18,
+                        healthType
+                    )).mul(healthVars.perpInLpAmountX18).mul(
+                        healthVars.perpPriceX18
+                    );
+            }
         }
     }
 
@@ -297,6 +313,7 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         onlyOwner
     {
         require(address(engineByType[engineType]) == address(0));
+        require(engine != address(0));
         IProductEngine productEngine = IProductEngine(engine);
         // Register
         supportedEngines.push(engineType);
@@ -373,9 +390,19 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         virtual
         onlyEndpoint
     {
-        uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        IERC20Base token = IERC20Base(
+            spotEngine.getConfig(txn.productId).token
+        );
+        require(address(token) != address(0));
+        // transfer from the endpoint
+        handleDepositTransfer(token, msg.sender, uint256(txn.amount));
 
-        int256 amountRealized = int256(txn.amount);
+        uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
+        int256 amountRealized = int256(txn.amount) *
+            int256(10**(MAX_DECIMALS - token.decimals()));
 
         IProductEngine.ProductDelta[]
             memory deltas = new IProductEngine.ProductDelta[](1);
@@ -386,15 +413,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
             amountDeltaX18: amountRealized.fromInt(),
             vQuoteDeltaX18: 0
         });
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
+
         spotEngine.applyDeltas(deltas);
-        IERC20Base token = IERC20Base(
-            spotEngine.getConfig(txn.productId).token
-        );
-        // transfer from the endpoint
-        handleDepositTransfer(token, msg.sender, uint256(txn.amount));
+
         emit ModifyCollateral(amountRealized, subaccountId, txn.productId);
     }
 
@@ -404,14 +425,41 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         virtual
         onlyEndpoint
     {
-        int256 amountX18 = int256(txn.amount);
+        IERC20Base token = IERC20Base(quote);
+
+        int256 amountX18 = int256(txn.amount) *
+            int256(10**(MAX_DECIMALS - token.decimals()));
         insuranceX18 += amountX18.fromInt();
         // facilitate transfer
-        handleDepositTransfer(
-            IERC20Base(quote),
-            msg.sender,
-            uint256(txn.amount)
+        handleDepositTransfer(token, msg.sender, uint256(txn.amount));
+    }
+
+    function depositInsuranceFromBalance(
+        IEndpoint.DepositInsuranceFromBalance calldata txn
+    ) external virtual onlyEndpoint {
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
         );
+
+        uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
+        int256 amountRealized = -int256(txn.amount);
+
+        IProductEngine.ProductDelta[]
+            memory deltas = new IProductEngine.ProductDelta[](1);
+
+        deltas[0] = IProductEngine.ProductDelta({
+            productId: QUOTE_PRODUCT_ID,
+            subaccountId: subaccountId,
+            amountDeltaX18: amountRealized.fromInt(),
+            vQuoteDeltaX18: 0
+        });
+
+        spotEngine.applyDeltas(deltas);
+        require(!_isUnderInitial(subaccountId), ERR_SUBACCT_HEALTH);
+
+        insuranceX18 += -amountRealized.fromInt();
+
+        emit ModifyCollateral(amountRealized, subaccountId, QUOTE_PRODUCT_ID);
     }
 
     function handleWithdrawTransfer(
@@ -427,9 +475,23 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         virtual
         onlyEndpoint
     {
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        IERC20Base token = IERC20Base(
+            spotEngine.getConfig(txn.productId).token
+        );
+        require(address(token) != address(0));
+        handleWithdrawTransfer(
+            token,
+            txn.sender,
+            spotEngine.getWithdrawTransferAmount(txn.productId, txn.amount)
+        );
+
         uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
 
-        int256 amountRealized = -int256(txn.amount);
+        int256 amountRealized = -int256(txn.amount) *
+            int256(10**(MAX_DECIMALS - token.decimals()));
 
         IProductEngine.ProductDelta[]
             memory deltas = new IProductEngine.ProductDelta[](1);
@@ -441,15 +503,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
             vQuoteDeltaX18: 0
         });
 
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
         spotEngine.applyDeltas(deltas);
         require(!_isUnderInitial(subaccountId), ERR_SUBACCT_HEALTH);
-        IERC20Base token = IERC20Base(
-            spotEngine.getConfig(txn.productId).token
-        );
-        handleWithdrawTransfer(token, txn.sender, txn.amount);
+
         emit ModifyCollateral(amountRealized, subaccountId, txn.productId);
     }
 
@@ -622,6 +678,13 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         uint64 subaccountId
     ) internal view returns (LiquidationStatus) {
         bool canSocialize = true;
+        (, ISpotEngine.Balance memory balance) = spotEngine.getStateAndBalance(
+            QUOTE_PRODUCT_ID,
+            subaccountId
+        );
+
+        canSocialize = canSocialize && (balance.amountX18 <= 0);
+
         for (uint32 i = 0; i < maxHealthGroup; ++i) {
             HealthGroupSummary memory summary = describeHealthGroup(
                 spotEngine,
@@ -635,7 +698,7 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
                 return LiquidationStatus.CannotLiquidateLiabilities;
             }
 
-            canSocialize = canSocialize && (summary.basisAmountX18 != 0);
+            canSocialize = canSocialize && (summary.basisAmountX18 == 0);
 
             // perp positions (outside of spreads) should be completely
             // closed before we can start liquidating liabilities
@@ -665,11 +728,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         require(
             (originalBalanceX18 != 0 && liquidationAmountX18 != 0) &&
                 ((liquidationAmountX18 > 0 &&
-                    originalBalanceX18 >= liquidationAmountX18 &&
-                    originalBalanceX18 > 0) ||
+                    originalBalanceX18 >= liquidationAmountX18) ||
                     (liquidationAmountX18 <= 0 &&
-                        originalBalanceX18 <= liquidationAmountX18 &&
-                        originalBalanceX18 < 0)),
+                        originalBalanceX18 <= liquidationAmountX18)),
             ERR_NOT_LIQUIDATABLE_AMT
         );
     }
@@ -713,7 +774,7 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
             txn.liquidateeId
         );
         bool isLiability = false;
-        int256 amountToLiquidateX18 = PRBMathSD59x18.fromInt(txn.amount);
+        int256 amountToLiquidateX18 = txn.amount.fromInt();
         LiquidationVars memory vars;
 
         // TODO: transfer some premium to insurance fund
@@ -725,6 +786,7 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
             isLiability = summary.basisAmountX18 < 0;
 
             HealthGroup memory healthGroup = healthGroups[txn.healthGroup];
+            require(healthGroup.spotId != 0 && healthGroup.perpId != 0);
 
             vars.liquidationPriceX18 = getSpreadLiqPriceX18(
                 healthGroup,

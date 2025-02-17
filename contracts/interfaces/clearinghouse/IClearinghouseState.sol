@@ -10,11 +10,11 @@ interface IClearinghouseState {
         // between 0 and 2
         // these integers are the real
         // weights times 1e9
-        int48 longWeightInitial;
-        int48 shortWeightInitial;
-        int48 longWeightMaintenance;
-        int48 shortWeightMaintenance;
-        int48 largePositionPenalty;
+        int32 longWeightInitial;
+        int32 shortWeightInitial;
+        int32 longWeightMaintenance;
+        int32 shortWeightMaintenance;
+        int32 largePositionPenalty;
     }
 
     struct HealthGroup {

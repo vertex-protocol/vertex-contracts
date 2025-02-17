@@ -64,5 +64,5 @@ interface IPerpEngine is IProductEngine {
             Balance memory balance
         );
 
-    function getMarkPrice(uint32 productId) external view returns (int256);
+    function getMarkPriceX18(uint32 productId) external view returns (int256);
 }

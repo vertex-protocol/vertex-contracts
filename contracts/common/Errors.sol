@@ -74,6 +74,12 @@ string constant ERR_INVALID_SIGNATURE = "IS";
 
 string constant ERR_ORDERS_CANNOT_BE_MATCHED = "OCBM";
 
+string constant ERR_INVALID_LP_AMOUNT = "ILA";
+
 string constant ERR_SLIPPAGE_TOO_HIGH = "STH";
 
 string constant ERR_SUBACCOUNT_NOT_FOUND = "SNF";
+
+string constant ERR_INVALID_PRICE = "IPR";
+
+string constant ERR_INVALID_TIME = "ITI";

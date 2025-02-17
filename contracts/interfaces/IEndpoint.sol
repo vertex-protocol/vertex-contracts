@@ -27,7 +27,8 @@ interface IEndpoint {
         BurnLp,
         SwapAMM,
         MatchOrderAMM,
-        DumpFees
+        DumpFees,
+        DepositInsuranceFromBalance
     }
 
     /// requires signature from sender
@@ -114,6 +115,7 @@ interface IEndpoint {
     struct UpdatePrice {
         uint32 productId;
         int256 priceX18;
+        bool isPerpIndex;
     }
 
     struct SettlePnl {
@@ -195,6 +197,18 @@ interface IEndpoint {
         uint32 productId;
     }
 
+    struct DepositInsuranceFromBalance {
+        address sender;
+        string subaccountName;
+        uint256 amount;
+        uint64 nonce;
+    }
+
+    struct SignedDepositInsuranceFromBalance {
+        DepositInsuranceFromBalance tx;
+        bytes signature;
+    }
+
     function depositCollateral(
         string calldata subaccountName,
         uint32 productId,
@@ -211,6 +225,11 @@ interface IEndpoint {
     function submitSlowModeTransaction(bytes calldata transaction) external;
 
     function getPriceX18(uint32 productId) external view returns (int256);
+
+    function getPerpIndexPriceX18(uint32 productId)
+        external
+        view
+        returns (int256);
 
     function getTime() external view returns (uint256);
 

@@ -18,7 +18,6 @@ import "./interfaces/clearinghouse/IClearinghouseState.sol";
 
 abstract contract BaseEngine is IProductEngine, EndpointGated {
     using PRBMathSD59x18 for int256;
-    IEndpoint internal _endpoint;
     IClearinghouse internal _clearinghouse;
     IFeeCalculator internal _fees;
     uint32[] internal productIds;
@@ -35,7 +34,7 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
 
     function _initialize(
         address _clearinghouseAddr,
-        address,
+        address, /* _quoteAddr */
         address _endpointAddr,
         address _admin,
         address _feeAddr

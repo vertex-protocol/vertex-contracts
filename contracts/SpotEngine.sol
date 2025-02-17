@@ -187,7 +187,7 @@ contract SpotEngine is SpotEngineLP {
 
                 emit SocializeProduct(productId, -balance.amountX18);
 
-                state.totalBorrowsNormalizedX18 -= balance.amountX18.div(
+                state.totalBorrowsNormalizedX18 += balance.amountX18.div(
                     state.cumulativeBorrowsMultiplierX18
                 );
                 balance.amountX18 = 0;

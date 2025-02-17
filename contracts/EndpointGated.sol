@@ -26,6 +26,17 @@ abstract contract EndpointGated is OwnableUpgradeable, IEndpointGated {
         return IEndpoint(endpoint).getPriceX18(productId);
     }
 
+    function getOraclePerpIndexPriceX18(uint32 productId)
+        public
+        view
+        returns (int256)
+    {
+        if (productId == QUOTE_PRODUCT_ID) {
+            return PRBMathSD59x18.fromInt(1);
+        }
+        return IEndpoint(endpoint).getPerpIndexPriceX18(productId);
+    }
+
     function getOracleTime() internal view returns (uint256) {
         return IEndpoint(endpoint).getTime();
     }

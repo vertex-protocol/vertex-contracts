@@ -14,12 +14,19 @@ abstract contract SpotEngineLP is SpotEngineState {
         int256 quoteAmountHighX18
     ) external {
         checkCanApplyDeltas();
+        require(
+            amountBaseX18 > 0 &&
+                quoteAmountLowX18 > 0 &&
+                quoteAmountHighX18 > 0,
+            ERR_INVALID_LP_AMOUNT
+        );
+
         LpState memory lpState = lpStates[productId];
         State memory base = states[productId];
         State memory quote = states[QUOTE_PRODUCT_ID];
 
         int256 amountQuoteX18 = (lpState.base.amountX18 == 0)
-            ? quoteAmountLowX18
+            ? amountBaseX18.mul(getOraclePriceX18(productId)).ceil()
             : amountBaseX18
                 .mul(lpState.quote.amountX18.div(lpState.base.amountX18))
                 .ceil();
@@ -65,13 +72,13 @@ abstract contract SpotEngineLP is SpotEngineState {
         int256 amountLpX18
     ) public {
         checkCanApplyDeltas();
+        require(amountLpX18 > 0, ERR_INVALID_LP_AMOUNT);
 
         LpState memory lpState = lpStates[productId];
         LpBalance memory lpBalance = lpBalances[productId][subaccountId];
         State memory base = states[productId];
         State memory quote = states[QUOTE_PRODUCT_ID];
 
-        int256 amountLpX18 = int256(amountLpX18);
         if (amountLpX18 == type(int256).max) {
             amountLpX18 = lpBalance.amountX18;
         }
@@ -84,12 +91,14 @@ abstract contract SpotEngineLP is SpotEngineState {
 
         int256 amountLp = amountLpX18.toInt();
 
-        int256 amountBaseX18 = (
-            MathHelper.mul(amountLp, lpState.base.amountX18 / lpState.supply)
-        );
-        int256 amountQuoteX18 = (
-            MathHelper.mul(amountLp, lpState.quote.amountX18 / lpState.supply)
-        );
+        int256 amountBaseX18 = MathHelper.mul(
+            amountLp,
+            lpState.base.amountX18
+        ) / lpState.supply;
+        int256 amountQuoteX18 = MathHelper.mul(
+            amountLp,
+            lpState.quote.amountX18
+        ) / lpState.supply;
 
         _updateBalance(base, lpState.base, -amountBaseX18);
         _updateBalance(quote, lpState.quote, -amountQuoteX18);

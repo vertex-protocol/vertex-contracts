@@ -13,6 +13,8 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
     mapping(uint32 => LpState) public lpStates;
     mapping(uint32 => mapping(uint64 => LpBalance)) public lpBalances;
 
+    mapping(uint32 => int256) public lastRealizedDepositRateX18;
+
     function _updateBalance(
         State memory state,
         Balance memory balance,
@@ -163,6 +165,7 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         state.cumulativeDepositsMultiplierX18 = state
             .cumulativeDepositsMultiplierX18
             .mul(ONE + realizedDepositRateX18);
+        lastRealizedDepositRateX18[productId] = realizedDepositRateX18;
 
         if (feesAmtX18 != 0) {
             Balance memory feesAccBalance = balances[productId][
@@ -202,7 +205,21 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         return (lpState, lpBalance, state, balance);
     }
 
-    function updateStates(uint256 dt) external {
+    function getWithdrawTransferAmount(uint32 productId, uint256 amount)
+        external
+        view
+        returns (uint256)
+    {
+        return
+            uint256(
+                int256(amount)
+                    .fromInt()
+                    .div(ONE + lastRealizedDepositRateX18[productId])
+                    .toInt()
+            );
+    }
+
+    function updateStates(uint256 dt) external onlyEndpoint {
         State memory quoteState = states[QUOTE_PRODUCT_ID];
         _updateState(QUOTE_PRODUCT_ID, quoteState, dt);
 

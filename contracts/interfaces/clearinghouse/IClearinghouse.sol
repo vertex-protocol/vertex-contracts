@@ -37,4 +37,8 @@ interface IClearinghouse is
     function depositInsurance(IEndpoint.DepositInsurance calldata tx) external;
 
     function settlePnl(IEndpoint.SettlePnl calldata tx) external;
+
+    function depositInsuranceFromBalance(
+        IEndpoint.DepositInsuranceFromBalance calldata tx
+    ) external;
 }

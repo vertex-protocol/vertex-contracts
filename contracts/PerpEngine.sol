@@ -159,7 +159,7 @@ contract PerpEngine is PerpEngineLp {
                 Balance memory balance
             ) = getSettlementState(productId, subaccountId);
 
-            if (canSettleX18.abs() > 0) {
+            if (canSettleX18 != 0) {
                 // Product and balance updates in getSettlementState
                 state.availableSettleX18 -= canSettleX18;
                 balance.vQuoteBalanceX18 -= canSettleX18;
@@ -200,9 +200,13 @@ contract PerpEngine is PerpEngineLp {
             priceX18
         );
 
+        int256 ratioX18 = lpBalance.amountX18 == 0
+            ? int256(0)
+            : lpBalance.amountX18.div(lpState.supply.fromInt());
+
         int256 positionPnlX18 = priceX18.mul(balance.amountX18 + ammBaseX18) +
             balance.vQuoteBalanceX18 +
-            ammQuoteX18;
+            ammQuoteX18.mul(ratioX18);
 
         availableSettleX18 = MathHelper.min(
             positionPnlX18,
@@ -223,7 +227,7 @@ contract PerpEngine is PerpEngineLp {
                 subaccountId
             );
             if (balance.vQuoteBalanceX18 < 0) {
-                int256 insuranceCoverX18 = MathHelper.max(
+                int256 insuranceCoverX18 = MathHelper.min(
                     insuranceX18,
                     -balance.vQuoteBalanceX18
                 );
@@ -238,6 +242,7 @@ contract PerpEngine is PerpEngineLp {
                     ) / 2;
                     state.cumulativeFundingLongX18 += fundingPerShareX18;
                     state.cumulativeFundingShortX18 -= fundingPerShareX18;
+                    states[productId] = state;
                     balance.vQuoteBalanceX18 = 0;
                     emit SocializeProduct(productId, -balance.vQuoteBalanceX18);
                 }

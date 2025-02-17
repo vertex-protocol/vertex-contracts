@@ -94,7 +94,7 @@ library MathHelper {
         int256 quoteX18,
         int256 priceX18
     ) internal pure returns (int256, int256) {
-        if (baseX18 == 0 && quoteX18 == 0) {
+        if (baseX18 == 0 || quoteX18 == 0) {
             return (0, 0);
         }
         int256 k = baseX18.toInt() * quoteX18.toInt();
@@ -103,7 +103,7 @@ library MathHelper {
         int256 base = (MathHelper.sqrt(k) * 1e9) / MathHelper.sqrt(priceX18);
         // TODO: this can cause a divide by zero
         int256 quote = k / base;
-        return (base.fromInt(), quote.toInt());
+        return (base.fromInt(), quote.fromInt());
     }
 
     function swap(
@@ -117,7 +117,7 @@ library MathHelper {
         if (base == 0 || quote == 0) {
             return (0, 0);
         }
-        int256 currentPriceX18 = quote.fromInt().div(base.fromInt());
+        int256 currentPriceX18 = quote.div(base);
 
         int256 keepRateX18 = 1e18 - lpSpreadX18;
 
@@ -147,7 +147,11 @@ library MathHelper {
         ) {
             // we hit price limits before we exhaust amountSwap
             baseSwapped = baseAtPrice - base;
-            baseSwapped -= baseSwapped % sizeIncrement;
+            int256 remainder = baseSwapped % sizeIncrement;
+            baseSwapped -= remainder;
+            if (baseSwapped < 0 && remainder != 0) {
+                baseSwapped -= sizeIncrement;
+            }
         } else {
             // just swap it all
             // amountSwap is already guaranteed to adhere to sizeIncrement
@@ -158,7 +162,7 @@ library MathHelper {
         if (amountSwap > 0) {
             quoteSwappedX18 = quoteSwappedX18.mul(keepRateX18).toInt();
         } else {
-            quoteSwappedX18 = quoteSwappedX18.div(keepRateX18).toInt();
+            quoteSwappedX18 = quoteSwappedX18.div(keepRateX18).ceil().toInt();
         }
         return (baseSwapped.fromInt(), quoteSwappedX18.fromInt());
     }

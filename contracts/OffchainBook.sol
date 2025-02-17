@@ -27,7 +27,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
 
     IClearinghouse public clearinghouse;
     IProductEngine private engine;
-    IFeeCalculator private fees;
+    IFeeCalculator internal fees;
     Market public market;
 
     mapping(bytes32 => int256) public filledAmounts;
@@ -130,6 +130,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         bytes32 makerDigest;
         uint64 takerSubaccountId;
         uint64 makerSubaccountId;
+        int256 makerAmount;
     }
 
     function _matchOrderAMM(
@@ -168,11 +169,8 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             takerAmountDelta = MathHelper.min(taker.amount, -maker.amount);
         }
 
-        takerAmountDeltaX18 = PRBMathSD59x18.fromInt(takerAmountDelta);
-        int256 makerQuoteDeltaX18 = PRBMathSD59x18.mul(
-            takerAmountDeltaX18,
-            maker.priceX18
-        );
+        takerAmountDeltaX18 = takerAmountDelta.fromInt();
+        int256 makerQuoteDeltaX18 = takerAmountDeltaX18.mul(maker.priceX18);
 
         takerQuoteDeltaX18 = -makerQuoteDeltaX18;
 
@@ -212,7 +210,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             ordersInfo.makerDigest,
             ordersInfo.makerSubaccountId,
             maker.priceX18,
-            maker.amount,
+            ordersInfo.makerAmount,
             maker.expiration,
             maker.nonce,
             false,
@@ -247,7 +245,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             takerSubaccountId,
             _market.productId,
             takerQuoteDeltaX18,
-            false
+            true
         );
         _market.collectedFeesX18 += takerFeeX18;
 
@@ -312,11 +310,11 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             makerSubaccountId: clearinghouse.getSubaccountId(
                 maker.order.sender,
                 maker.order.subaccountName
-            )
+            ),
+            makerAmount: maker.order.amount
         });
 
         int256 takerAmount = taker.order.amount;
-        int256 makerAmount = maker.order.amount;
 
         require(
             _validateOrder(_market, taker, ordersInfo.takerDigest),
@@ -374,7 +372,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             ordersInfo.takerSubaccountId,
             _market.productId,
             takerQuoteDeltaX18,
-            false
+            true
         );
         _market.collectedFeesX18 += takerFeeX18;
 
@@ -432,7 +430,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             takerAmount -
             taker.order.amount;
         filledAmounts[ordersInfo.makerDigest] =
-            makerAmount -
+            ordersInfo.makerAmount -
             maker.order.amount;
     }
 
@@ -459,7 +457,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             takerSubaccountId,
             _market.productId,
             takerQuoteDeltaX18,
-            false
+            true
         );
         _market.collectedFeesX18 += takerFeeX18;
 
@@ -500,13 +498,22 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         // https://en.wikipedia.org/wiki/Design_Patterns
         market.collectedFeesX18 = 0;
 
-        // TODO: this is probably fucked for perps
-        feeAccDeltas[0] = IProductEngine.ProductDelta({
-            productId: QUOTE_PRODUCT_ID,
-            subaccountId: FEES_SUBACCOUNT_ID,
-            amountDeltaX18: feesAmountX18,
-            vQuoteDeltaX18: feesAmountX18
-        });
+        if (engine.getEngineType() == IProductEngine.EngineType.SPOT) {
+            feeAccDeltas[0] = IProductEngine.ProductDelta({
+                productId: QUOTE_PRODUCT_ID,
+                subaccountId: FEES_SUBACCOUNT_ID,
+                amountDeltaX18: feesAmountX18,
+                vQuoteDeltaX18: 0
+            });
+        } else {
+            feeAccDeltas[0] = IProductEngine.ProductDelta({
+                productId: market.productId,
+                subaccountId: FEES_SUBACCOUNT_ID,
+                amountDeltaX18: 0,
+                vQuoteDeltaX18: feesAmountX18
+            });
+        }
+
         engine.applyDeltas(feeAccDeltas);
     }
 

@@ -14,10 +14,13 @@ contract FeeCalculator is Initializable, IFeeCalculator {
     function getFeeFractionX18(
         uint64, /* subaccountId */
         uint32, /* productId */
-        bool /* taker */
+        bool taker
     ) external pure returns (int256) {
-        //return 3_000_000_000_000_000; // .3%
-        return 1_000_000_000_000_000;
+        if (taker) {
+            return 2_000_000_000_000_000; // 0.2%
+        } else {
+            return 0;
+        }
         // feecalc needs more state to look up fractions for various products, if that was the plan
     }
 

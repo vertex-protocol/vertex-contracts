@@ -4,7 +4,7 @@ import "./interfaces/engine/IPerpEngine.sol";
 import "./BaseEngine.sol";
 
 int256 constant EMA_TIME_CONSTANT_X18 = 998334721450938752;
-int256 constant FUNDING_PERIOD_X18 = 86000_000000000000000000;
+int256 constant FUNDING_PERIOD_X18 = 28800_000000000000000000; // 8 hours
 
 // we will want to config this later, but for now this is global and a percentage
 int256 constant MAX_PRICE_DIFF_PERCENT_X18 = 100000000000000000; // 0.1
@@ -17,8 +17,6 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
 
     mapping(uint32 => LpState) public lpStates;
     mapping(uint32 => mapping(uint64 => LpBalance)) public lpBalances;
-
-    mapping(uint32 => int256) markPrices;
 
     function _updateBalance(
         State memory state,
@@ -94,28 +92,36 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         return (lpState, lpBalance, state, balance);
     }
 
-    function updateStates(uint256 dt) external {
+    function getMarkPriceX18(uint32 productId) public view returns (int256) {
+        LpState memory lpState = lpStates[productId];
+        // if no instantaneous price available just use the spot index price
+        // and don't charge funding
+        if (lpState.base == 0) {
+            return getOraclePerpIndexPriceX18(productId);
+        }
+        return lpState.quote.fromInt() / lpState.base;
+    }
+
+    function updateStates(uint256 dt) external onlyEndpoint {
         for (uint32 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
             LpState memory lpState = lpStates[productId];
             State memory state = states[productId];
 
             {
-                int256 priceX18 = getOraclePriceX18(productId);
-                int256 markPriceX18 = markPrices[productId];
-                if (markPriceX18 == 0) {
-                    markPriceX18 = priceX18;
-                }
+                int256 indexPriceX18 = getOraclePerpIndexPriceX18(productId);
+
                 // cap this price diff
-                int256 priceDiffX18 = markPriceX18 - priceX18;
+                int256 priceDiffX18 = getMarkPriceX18(productId) -
+                    indexPriceX18;
                 if (
                     priceDiffX18.abs() >
-                    MAX_PRICE_DIFF_PERCENT_X18.mul(priceX18)
+                    MAX_PRICE_DIFF_PERCENT_X18.mul(indexPriceX18)
                 ) {
                     // Proper sign
                     priceDiffX18 = (priceDiffX18 > 0)
-                        ? MAX_PRICE_DIFF_PERCENT_X18.mul(priceX18)
-                        : -MAX_PRICE_DIFF_PERCENT_X18.mul(priceX18);
+                        ? MAX_PRICE_DIFF_PERCENT_X18.mul(indexPriceX18)
+                        : -MAX_PRICE_DIFF_PERCENT_X18.mul(indexPriceX18);
                 }
 
                 int256 paymentAmountX18 = priceDiffX18
@@ -129,7 +135,7 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
                 Balance memory balance = Balance({
                     amountX18: lpState.base.fromInt(),
                     vQuoteBalanceX18: 0,
-                    lastCumulativeFundingX18: state.cumulativeFundingLongX18
+                    lastCumulativeFundingX18: lpState.lastCumulativeFundingX18
                 });
                 _updateBalance(state, balance, 0, 0);
                 if (lpState.supply != 0) {
@@ -143,9 +149,5 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
             lpStates[productId] = lpState;
             states[productId] = state;
         }
-    }
-
-    function getMarkPrice(uint32 productId) external view returns (int256) {
-        return markPrices[productId];
     }
 }

@@ -10,3 +10,5 @@ uint64 constant FEES_SUBACCOUNT_ID = type(uint64).max;
 uint256 constant MINIMUM_LIQUIDITY = 10**3;
 
 int256 constant ONE = 10**18;
+
+uint8 constant MAX_DECIMALS = 18;

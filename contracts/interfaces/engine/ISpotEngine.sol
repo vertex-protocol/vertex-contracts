@@ -50,4 +50,9 @@ interface ISpotEngine is IProductEngine {
         );
 
     function getConfig(uint32 productId) external view returns (Config memory);
+
+    function getWithdrawTransferAmount(uint32 productId, uint256 amount)
+        external
+        view
+        returns (uint256);
 }
