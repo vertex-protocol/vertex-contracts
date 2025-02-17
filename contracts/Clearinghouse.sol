@@ -2,7 +2,6 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "prb-math/contracts/PRBMathSD59x18.sol";
 import "hardhat/console.sol";
 
 import "./common/Constants.sol";
@@ -13,49 +12,33 @@ import "./interfaces/IOffchainBook.sol";
 import "./libraries/KeyHelper.sol";
 import "./libraries/ERC20Helper.sol";
 import "./libraries/MathHelper.sol";
+import "./libraries/MathSD21x18.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 import "./EndpointGated.sol";
 import "./interfaces/IEndpoint.sol";
 import "./ClearinghouseRisk.sol";
+import "./ClearinghouseStorage.sol";
 
-contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
-    using PRBMathSD59x18 for int256;
+contract Clearinghouse is
+    ClearinghouseRisk,
+    ClearinghouseStorage,
+    IClearinghouse
+{
+    using MathSD21x18 for int128;
     using ERC20Helper for IERC20Base;
-
-    // Each clearinghouse has a quote ERC20
-    address private quote;
-
-    // fee calculator
-    address private fees;
-
-    // Number of products registered across all engines
-    uint32 private numProducts;
-
-    // product ID -> engine address
-    mapping(uint32 => IProductEngine) internal productToEngine;
-    // Type to engine address
-    mapping(IProductEngine.EngineType => IProductEngine) engineByType;
-    // Supported engine types
-    IProductEngine.EngineType[] private supportedEngines;
-
-    // sender addr -> subaccount id
-    mapping(address => mapping(string => uint64)) public subaccounts;
-    mapping(uint64 => address) public subaccountOwner;
-    mapping(uint64 => string) public subaccountNames;
-
-    uint64 private subaccountCount;
-    // insurance stuff, consider making it its own subaccount later
-    int256 public insuranceX18;
 
     function initialize(
         address _endpoint,
         address _quote,
-        address _fees
+        address _fees,
+        address _clearinghouseLiq
     ) external initializer {
         __Ownable_init();
         setEndpoint(_endpoint);
         quote = _quote;
-        fees = _fees;
+        fees = IFeeCalculator(_fees);
+        clearinghouse = address(this);
+        clearinghouseLiq = _clearinghouseLiq;
         numProducts = 1;
 
         // fees account will be subaccount max int
@@ -133,15 +116,15 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         return subaccountOwner[subaccountId];
     }
 
-    function getInsuranceX18() external view returns (int256) {
-        return insuranceX18;
+    function getInsurance() external view returns (int128) {
+        return insurance;
     }
 
     /// @notice grab total subaccount health
-    function getHealthX18(
+    function getHealth(
         uint64 subaccountId,
         IProductEngine.HealthType healthType
-    ) public view returns (int256 healthX18) {
+    ) public view returns (int128 healthX18) {
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
@@ -152,91 +135,103 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         {
             (, ISpotEngine.Balance memory balance) = spotEngine
                 .getStateAndBalance(QUOTE_PRODUCT_ID, subaccountId);
-            healthX18 = balance.amountX18;
+            healthX18 = balance.amount;
         }
 
         for (uint32 i = 0; i <= maxHealthGroup; ++i) {
             HealthGroup memory group = healthGroups[i];
             HealthVars memory healthVars;
 
-            if (group.spotId != 0) {
+            if (
+                group.spotId != 0 &&
+                spotEngine.hasBalance(group.spotId, subaccountId)
+            ) {
                 (
                     ISpotEngine.LpState memory lpState,
                     ISpotEngine.LpBalance memory lpBalance,
-                    ISpotEngine.State memory state,
+                    ,
                     ISpotEngine.Balance memory balance
                 ) = spotEngine.getStatesAndBalances(group.spotId, subaccountId);
 
                 healthVars.spotPriceX18 = getOraclePriceX18(group.spotId);
-                int256 ratioX18 = lpBalance.amountX18 == 0
-                    ? int256(0)
-                    : lpBalance.amountX18.div(lpState.supply.fromInt());
 
-                (int256 ammBaseX18, int256 ammQuoteX18) = MathHelper
-                    .ammEquilibrium(
-                        lpState.base.amountX18,
-                        lpState.quote.amountX18,
-                        healthVars.spotPriceX18
+                if (lpBalance.amount != 0) {
+                    (int128 ammBase, int128 ammQuote) = MathHelper
+                        .ammEquilibrium(
+                            lpState.base.amount,
+                            lpState.quote.amount,
+                            healthVars.spotPriceX18
+                        );
+
+                    healthX18 += ammQuote.mul(lpBalance.amount).div(
+                        lpState.supply
                     );
+                    healthVars.spotInLpAmount = ammBase
+                        .mul(lpBalance.amount)
+                        .div(lpState.supply);
+                }
 
-                healthX18 += ammQuoteX18.mul(ratioX18);
-                healthVars.spotInLpAmountX18 = ammBaseX18.mul(ratioX18);
-                healthVars.spotAmountX18 = balance.amountX18;
+                healthVars.spotAmount = balance.amount;
                 healthVars.spotRisk = getRisk(group.spotId);
             }
-            if (group.perpId != 0) {
+            if (
+                group.perpId != 0 &&
+                perpEngine.hasBalance(group.perpId, subaccountId)
+            ) {
                 (
                     IPerpEngine.LpState memory lpState,
                     IPerpEngine.LpBalance memory lpBalance,
-                    IPerpEngine.State memory state,
+                    ,
                     IPerpEngine.Balance memory balance
                 ) = perpEngine.getStatesAndBalances(group.perpId, subaccountId);
                 healthVars.perpPriceX18 = getOraclePriceX18(group.perpId);
-                int256 ratioX18 = lpBalance.amountX18 == 0
-                    ? int256(0)
-                    : lpBalance.amountX18.div(lpState.supply.fromInt());
 
-                (int256 ammBaseX18, int256 ammQuoteX18) = MathHelper
-                    .ammEquilibrium(
-                        lpState.base.fromInt(),
-                        lpState.quote.fromInt(),
-                        healthVars.perpPriceX18
+                if (lpBalance.amount != 0) {
+                    (int128 ammBase, int128 ammQuote) = MathHelper
+                        .ammEquilibrium(
+                            lpState.base,
+                            lpState.quote,
+                            healthVars.perpPriceX18
+                        );
+
+                    healthX18 += ammQuote.mul(lpBalance.amount).div(
+                        lpState.supply
                     );
+                    healthVars.perpInLpAmount = ammBase
+                        .mul(lpBalance.amount)
+                        .div(lpState.supply);
+                }
 
-                healthX18 +=
-                    ammQuoteX18.mul(ratioX18) +
-                    balance.vQuoteBalanceX18;
-                healthVars.perpInLpAmountX18 = ammBaseX18.mul(ratioX18);
-                healthVars.perpAmountX18 = balance.amountX18;
+                healthX18 += balance.vQuoteBalance;
+                healthVars.perpAmount = balance.amount;
                 healthVars.perpRisk = getRisk(group.perpId);
 
                 if (
-                    (healthVars.spotAmountX18 > 0) !=
-                    (healthVars.perpAmountX18 > 0)
+                    (healthVars.spotAmount > 0) != (healthVars.perpAmount > 0)
                 ) {
-                    if (healthVars.spotAmountX18 > 0) {
-                        healthVars.basisAmountX18 = MathHelper.min(
-                            healthVars.spotAmountX18,
-                            -healthVars.perpAmountX18
+                    if (healthVars.spotAmount > 0) {
+                        healthVars.basisAmount = MathHelper.min(
+                            healthVars.spotAmount,
+                            -healthVars.perpAmount
                         );
                     } else {
-                        healthVars.basisAmountX18 = MathHelper.max(
-                            healthVars.spotAmountX18,
-                            -healthVars.perpAmountX18
+                        healthVars.basisAmount = MathHelper.max(
+                            healthVars.spotAmount,
+                            -healthVars.perpAmount
                         );
                     }
-                    healthVars.spotAmountX18 -= healthVars.basisAmountX18;
-                    healthVars.perpAmountX18 += healthVars.basisAmountX18;
+                    healthVars.spotAmount -= healthVars.basisAmount;
+                    healthVars.perpAmount += healthVars.basisAmount;
                 }
             }
 
             // risk for the basis trade, discounted
-            if (healthVars.basisAmountX18 != 0) {
+            if (healthVars.basisAmount != 0) {
                 // add the actual value of the basis (PNL)
                 healthX18 += (healthVars.spotPriceX18 - healthVars.perpPriceX18)
-                    .mul(healthVars.basisAmountX18);
+                    .mul(healthVars.basisAmount);
 
-                int256 posAmountX18 = MathHelper.abs(healthVars.basisAmountX18);
+                int128 posAmount = MathHelper.abs(healthVars.basisAmount);
 
                 // compute a penalty% on the notional size of the basis trade
                 // this is equivalent to a long weight, i.e. long weight 0.95 == 0.05 penalty
@@ -245,59 +240,61 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
                     ._getSpreadPenaltyX18(
                         healthVars.spotRisk,
                         healthVars.perpRisk,
-                        posAmountX18,
+                        posAmount,
                         healthType
                     )
-                    .mul(posAmountX18)
+                    .mul(posAmount)
                     .mul(healthVars.spotPriceX18 + healthVars.perpPriceX18);
             }
 
-            if (group.spotId != 0) {
-                // apply risk for spot and perp positions
-                int256 combinedSpotX18 = healthVars.spotAmountX18 +
-                    healthVars.spotInLpAmountX18;
+            // apply risk for spot and perp positions
+            int128 combinedSpot = healthVars.spotAmount +
+                healthVars.spotInLpAmount;
+
+            if (combinedSpot != 0) {
                 healthX18 += RiskHelper
                     ._getWeightX18(
                         healthVars.spotRisk,
-                        combinedSpotX18,
+                        combinedSpot,
                         healthType
                     )
-                    .mul(combinedSpotX18)
+                    .mul(combinedSpot)
                     .mul(healthVars.spotPriceX18);
             }
 
-            if (group.perpId != 0) {
-                int256 combinedPerpX18 = healthVars.perpAmountX18 +
-                    healthVars.perpInLpAmountX18;
+            int128 combinedPerp = healthVars.perpAmount +
+                healthVars.perpInLpAmount;
+
+            if (combinedPerp != 0) {
                 healthX18 += RiskHelper
                     ._getWeightX18(
                         healthVars.perpRisk,
-                        combinedPerpX18,
+                        combinedPerp,
                         healthType
                     )
-                    .mul(combinedPerpX18)
+                    .mul(combinedPerp)
                     .mul(healthVars.perpPriceX18);
             }
 
-            if (group.spotId != 0) {
+            if (healthVars.spotInLpAmount != 0) {
                 // apply penalties on amount in LPs
                 healthX18 -= (ONE -
                     RiskHelper._getWeightX18(
                         healthVars.spotRisk,
-                        healthVars.spotInLpAmountX18,
+                        healthVars.spotInLpAmount,
                         healthType
-                    )).mul(healthVars.spotInLpAmountX18).mul(
+                    )).mul(healthVars.spotInLpAmount).mul(
                         healthVars.spotPriceX18
                     );
             }
 
-            if (group.perpId != 0) {
+            if (healthVars.perpInLpAmount != 0) {
                 healthX18 -= (ONE -
                     RiskHelper._getWeightX18(
                         healthVars.perpRisk,
-                        healthVars.perpInLpAmountX18,
+                        healthVars.perpInLpAmount,
                         healthType
-                    )).mul(healthVars.perpInLpAmountX18).mul(
+                    )).mul(healthVars.perpInLpAmount).mul(
                         healthVars.perpPriceX18
                     );
             }
@@ -330,7 +327,7 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
             quote,
             getEndpoint(),
             owner(),
-            fees
+            address(fees)
         );
     }
 
@@ -380,9 +377,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
     function handleDepositTransfer(
         IERC20Base token,
         address from,
-        uint256 amount
+        uint128 amount
     ) internal virtual {
-        token.safeTransferFrom(from, address(this), amount);
+        token.safeTransferFrom(from, address(this), uint256(amount));
     }
 
     function depositCollateral(IEndpoint.DepositCollateral calldata txn)
@@ -398,11 +395,13 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         );
         require(address(token) != address(0));
         // transfer from the endpoint
-        handleDepositTransfer(token, msg.sender, uint256(txn.amount));
+        handleDepositTransfer(token, msg.sender, uint128(txn.amount));
 
         uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
-        int256 amountRealized = int256(txn.amount) *
-            int256(10**(MAX_DECIMALS - token.decimals()));
+
+        require(token.decimals() <= MAX_DECIMALS);
+        int256 multiplier = int256(10**(MAX_DECIMALS - token.decimals()));
+        int128 amountRealized = int128(txn.amount) * int128(multiplier);
 
         IProductEngine.ProductDelta[]
             memory deltas = new IProductEngine.ProductDelta[](1);
@@ -410,8 +409,8 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         deltas[0] = IProductEngine.ProductDelta({
             productId: txn.productId,
             subaccountId: subaccountId,
-            amountDeltaX18: amountRealized.fromInt(),
-            vQuoteDeltaX18: 0
+            amountDelta: amountRealized,
+            vQuoteDelta: 0
         });
 
         spotEngine.applyDeltas(deltas);
@@ -426,48 +425,20 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         onlyEndpoint
     {
         IERC20Base token = IERC20Base(quote);
+        int256 multiplier = int256(10**(MAX_DECIMALS - token.decimals()));
+        int128 amount = int128(txn.amount) * int128(multiplier);
 
-        int256 amountX18 = int256(txn.amount) *
-            int256(10**(MAX_DECIMALS - token.decimals()));
-        insuranceX18 += amountX18.fromInt();
+        insurance += amount;
         // facilitate transfer
-        handleDepositTransfer(token, msg.sender, uint256(txn.amount));
-    }
-
-    function depositInsuranceFromBalance(
-        IEndpoint.DepositInsuranceFromBalance calldata txn
-    ) external virtual onlyEndpoint {
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-
-        uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
-        int256 amountRealized = -int256(txn.amount);
-
-        IProductEngine.ProductDelta[]
-            memory deltas = new IProductEngine.ProductDelta[](1);
-
-        deltas[0] = IProductEngine.ProductDelta({
-            productId: QUOTE_PRODUCT_ID,
-            subaccountId: subaccountId,
-            amountDeltaX18: amountRealized.fromInt(),
-            vQuoteDeltaX18: 0
-        });
-
-        spotEngine.applyDeltas(deltas);
-        require(!_isUnderInitial(subaccountId), ERR_SUBACCT_HEALTH);
-
-        insuranceX18 += -amountRealized.fromInt();
-
-        emit ModifyCollateral(amountRealized, subaccountId, QUOTE_PRODUCT_ID);
+        handleDepositTransfer(token, msg.sender, uint128(txn.amount));
     }
 
     function handleWithdrawTransfer(
         IERC20Base token,
         address to,
-        uint256 amount
+        uint128 amount
     ) internal virtual {
-        token.safeTransfer(to, amount);
+        token.safeTransfer(to, uint256(amount));
     }
 
     function withdrawCollateral(IEndpoint.WithdrawCollateral calldata txn)
@@ -489,9 +460,8 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         );
 
         uint64 subaccountId = _loadSubaccount(txn.sender, txn.subaccountName);
-
-        int256 amountRealized = -int256(txn.amount) *
-            int256(10**(MAX_DECIMALS - token.decimals()));
+        int256 multiplier = int256(10**(MAX_DECIMALS - token.decimals()));
+        int128 amountRealized = -int128(txn.amount) * int128(multiplier);
 
         IProductEngine.ProductDelta[]
             memory deltas = new IProductEngine.ProductDelta[](1);
@@ -499,8 +469,8 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         deltas[0] = IProductEngine.ProductDelta({
             productId: txn.productId,
             subaccountId: subaccountId,
-            amountDeltaX18: amountRealized.fromInt(),
-            vQuoteDeltaX18: 0
+            amountDelta: amountRealized,
+            vQuoteDelta: 0
         });
 
         spotEngine.applyDeltas(deltas);
@@ -518,9 +488,9 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         productToEngine[txn.productId].mintLp(
             txn.productId,
             subaccountId,
-            int256(txn.amountBase).fromInt(),
-            int256(txn.quoteAmountLow).fromInt(),
-            int256(txn.quoteAmountHigh).fromInt()
+            int128(txn.amountBase),
+            int128(txn.quoteAmountLow),
+            int128(txn.quoteAmountHigh)
         );
         require(!_isUnderInitial(subaccountId), ERR_SUBACCT_HEALTH);
     }
@@ -534,7 +504,7 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         productToEngine[txn.productId].burnLp(
             txn.productId,
             subaccountId,
-            int256(txn.amount).fromInt()
+            int128(txn.amount)
         );
     }
 
@@ -547,12 +517,12 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
         IProductEngine.ProductDelta[]
             memory deltas = new IProductEngine.ProductDelta[](1);
 
-        int256 amountSettledX18 = perpEngine.settlePnl(subaccountId);
+        int128 amountSettled = perpEngine.settlePnl(subaccountId);
         deltas[0] = IProductEngine.ProductDelta({
             productId: QUOTE_PRODUCT_ID,
             subaccountId: subaccountId,
-            amountDeltaX18: amountSettledX18,
-            vQuoteDeltaX18: 0
+            amountDelta: amountSettled,
+            vQuoteDelta: 0
         });
 
         ISpotEngine spotEngine = ISpotEngine(
@@ -562,7 +532,7 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
     }
 
     function settlePnl(IEndpoint.SettlePnl calldata txn) external onlyEndpoint {
-        for (uint256 i = 0; i < txn.subaccountIds.length; ++i) {
+        for (uint128 i = 0; i < txn.subaccountIds.length; ++i) {
             _settlePnl(txn.subaccountIds[i]);
         }
     }
@@ -594,8 +564,12 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
     // tails would still be expensive, but 99.9% likelihood it would be super cheap
     function _isUnderInitial(uint64 subaccountId) public view returns (bool) {
         // Weighted initial health with limit orders < 0
-        return
-            getHealthX18(subaccountId, IProductEngine.HealthType.INITIAL) < 0;
+        return getHealth(subaccountId, IProductEngine.HealthType.INITIAL) < 0;
+    }
+
+    function _isAboveInitial(uint64 subaccountId) public view returns (bool) {
+        // Weighted initial health with limit orders < 0
+        return getHealth(subaccountId, IProductEngine.HealthType.INITIAL) > 0;
     }
 
     function _isUnderMaintenance(uint64 subaccountId)
@@ -605,447 +579,32 @@ contract Clearinghouse is ClearinghouseRisk, IClearinghouse {
     {
         // Weighted maintenance health < 0
         return
-            getHealthX18(subaccountId, IProductEngine.HealthType.MAINTENANCE) <
-            0;
-    }
-
-    struct HealthGroupSummary {
-        int256 perpAmountX18;
-        int256 perpVQuoteX18;
-        int256 perpPriceX18;
-        int256 spotAmountX18;
-        int256 spotPriceX18;
-        int256 basisAmountX18;
-    }
-
-    function describeHealthGroup(
-        ISpotEngine spotEngine,
-        IPerpEngine perpEngine,
-        uint32 groupId,
-        uint64 subaccountId
-    ) internal view returns (HealthGroupSummary memory summary) {
-        HealthGroup memory group = healthGroups[groupId];
-
-        if (group.spotId != 0) {
-            (, ISpotEngine.Balance memory balance) = spotEngine
-                .getStateAndBalance(group.spotId, subaccountId);
-            summary.spotAmountX18 = balance.amountX18;
-            summary.spotPriceX18 = getOraclePriceX18(group.spotId);
-        }
-
-        if (group.perpId != 0) {
-            (, IPerpEngine.Balance memory balance) = perpEngine
-                .getStateAndBalance(group.perpId, subaccountId);
-            summary.perpAmountX18 = balance.amountX18;
-            summary.perpVQuoteX18 = balance.vQuoteBalanceX18;
-            summary.perpPriceX18 = getOraclePriceX18(group.perpId);
-        }
-
-        if ((summary.spotAmountX18 > 0) != (summary.perpAmountX18 > 0)) {
-            if (summary.spotAmountX18 > 0) {
-                summary.basisAmountX18 = MathHelper.min(
-                    summary.spotAmountX18,
-                    -summary.perpAmountX18
-                );
-            } else {
-                summary.basisAmountX18 = MathHelper.max(
-                    summary.spotAmountX18,
-                    -summary.perpAmountX18
-                );
-            }
-            summary.spotAmountX18 -= summary.basisAmountX18;
-            summary.perpAmountX18 += summary.basisAmountX18;
-        }
-    }
-
-    enum LiquidationStatus {
-        CannotLiquidateLiabilities, // still has assets or perps
-        CannotSocialize, // still has basis liabilities
-        // must wait until basis liability liquidation is finished
-        // and only spot liabilities are remaining
-        // remaining: spot liabilities and perp losses
-        // if insurance drained:
-        // -> socialize all
-        // if insurance not drained
-        // -> if spot liabilities, exit
-        // -> else attempt to repay all from insurance
-        CanSocialize
-    }
-
-    function getLiquidationStatus(
-        ISpotEngine spotEngine,
-        IPerpEngine perpEngine,
-        uint64 subaccountId
-    ) internal view returns (LiquidationStatus) {
-        bool canSocialize = true;
-        (, ISpotEngine.Balance memory balance) = spotEngine.getStateAndBalance(
-            QUOTE_PRODUCT_ID,
-            subaccountId
-        );
-
-        canSocialize = canSocialize && (balance.amountX18 <= 0);
-
-        for (uint32 i = 0; i < maxHealthGroup; ++i) {
-            HealthGroupSummary memory summary = describeHealthGroup(
-                spotEngine,
-                perpEngine,
-                i,
-                subaccountId
-            );
-            // long spot and long spreads are assets and should
-            // be liquidated first
-            if (summary.spotAmountX18 > 0 || summary.basisAmountX18 > 0) {
-                return LiquidationStatus.CannotLiquidateLiabilities;
-            }
-
-            canSocialize = canSocialize && (summary.basisAmountX18 == 0);
-
-            // perp positions (outside of spreads) should be completely
-            // closed before we can start liquidating liabilities
-
-            // however we could potentially still have a closed perp position
-            // with a positive vQuote balance, in which case the vQuote balance
-            // should be settled into USDC first, since it would be an asset
-            // note this vQuote balance criteria does not interfere with spreads;
-            // the only spreads remaining at this point are short spreads
-            // which are short spot and long perp. long perp should always
-            // have negative vQuoteX18 after settlement, so this will
-            // not trigger on a short spread
-            if (summary.perpVQuoteX18 > 0 || summary.perpAmountX18 != 0) {
-                return LiquidationStatus.CannotLiquidateLiabilities;
-            }
-        }
-        return
-            (canSocialize)
-                ? LiquidationStatus.CanSocialize
-                : LiquidationStatus.CannotSocialize;
-    }
-
-    function assertLiquidationAmount(
-        int256 originalBalanceX18,
-        int256 liquidationAmountX18
-    ) internal pure {
-        require(
-            (originalBalanceX18 != 0 && liquidationAmountX18 != 0) &&
-                ((liquidationAmountX18 > 0 &&
-                    originalBalanceX18 >= liquidationAmountX18) ||
-                    (liquidationAmountX18 <= 0 &&
-                        originalBalanceX18 <= liquidationAmountX18)),
-            ERR_NOT_LIQUIDATABLE_AMT
-        );
-    }
-
-    struct LiquidationVars {
-        int256 liquidationPriceX18;
-        int256 excessPerpToLiquidateX18;
-        int256 liquidationPaymentX18;
-        int256 insuranceCoverX18;
+            getHealth(subaccountId, IProductEngine.HealthType.MAINTENANCE) < 0;
     }
 
     function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata txn)
         external
         onlyEndpoint
     {
-        uint64 liquidatorId = _loadSubaccount(txn.sender, txn.subaccountName);
-        require(liquidatorId != txn.liquidateeId, ERR_UNAUTHORIZED);
-
-        require(_isUnderMaintenance(txn.liquidateeId), ERR_NOT_LIQUIDATABLE);
-
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
+        bytes4 liquidateSubaccountSelector = bytes4(
+            keccak256(
+                "liquidateSubaccount((address,string,uint64,uint8,uint32,int128,uint64))"
+            )
         );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
+        bytes memory liquidateSubaccountCall = abi.encodeWithSelector(
+            liquidateSubaccountSelector,
+            txn
         );
-        spotEngine.decomposeLps(txn.liquidateeId, liquidatorId);
-        perpEngine.decomposeLps(txn.liquidateeId, liquidatorId);
-
-        if (
-            getHealthX18(txn.liquidateeId, IProductEngine.HealthType.INITIAL) >=
-            0
-        ) {
-            return;
-        }
-
-        HealthGroupSummary memory summary = describeHealthGroup(
-            spotEngine,
-            perpEngine,
-            txn.healthGroup,
-            txn.liquidateeId
+        (bool success, bytes memory result) = clearinghouseLiq.delegatecall(
+            liquidateSubaccountCall
         );
-        bool isLiability = false;
-        int256 amountToLiquidateX18 = txn.amount.fromInt();
-        LiquidationVars memory vars;
+        require(success, string(result));
+    }
 
-        // TODO: transfer some premium to insurance fund
-        if (txn.mode == uint8(IEndpoint.LiquidationMode.SPREAD)) {
-            assertLiquidationAmount(
-                summary.basisAmountX18,
-                amountToLiquidateX18
-            );
-            isLiability = summary.basisAmountX18 < 0;
-
-            HealthGroup memory healthGroup = healthGroups[txn.healthGroup];
-            require(healthGroup.spotId != 0 && healthGroup.perpId != 0);
-
-            vars.liquidationPriceX18 = getSpreadLiqPriceX18(
-                healthGroup,
-                amountToLiquidateX18
-            );
-
-            // there is a fixed amount of the spot component of the spread
-            // we can liquidate until the insurance fund runs out of money
-            // however we can still liquidate the remaining perp component
-            // at the perp liquidation price. this way the spot liability just remains
-            // and the spread liability decomposes into a spot liability which is
-            // handled through socialization
-
-            // TODO: this block more or less copies spot liquidation exactly
-
-            if (isLiability) {
-                (, ISpotEngine.Balance memory quoteBalance) = spotEngine
-                    .getStateAndBalance(QUOTE_PRODUCT_ID, txn.liquidateeId);
-
-                int256 maximumLiquidatableX18 = MathHelper.max(
-                    (quoteBalance.amountX18 + insuranceX18).div(
-                        vars.liquidationPriceX18
-                    ),
-                    0
-                );
-
-                vars.excessPerpToLiquidateX18 =
-                    MathHelper.max(
-                        amountToLiquidateX18,
-                        -maximumLiquidatableX18
-                    ) -
-                    amountToLiquidateX18;
-                amountToLiquidateX18 += vars.excessPerpToLiquidateX18;
-                vars.liquidationPaymentX18 = vars.liquidationPriceX18.mul(
-                    amountToLiquidateX18
-                );
-                vars.insuranceCoverX18 = MathHelper.min(
-                    insuranceX18,
-                    MathHelper.max(
-                        0,
-                        -vars.liquidationPaymentX18 - quoteBalance.amountX18
-                    )
-                );
-            } else {
-                vars.liquidationPaymentX18 = vars.liquidationPriceX18.mul(
-                    amountToLiquidateX18
-                );
-            }
-
-            IProductEngine.ProductDelta[]
-                memory deltas = new IProductEngine.ProductDelta[](4);
-            deltas[0] = IProductEngine.ProductDelta({
-                productId: healthGroup.spotId,
-                subaccountId: txn.liquidateeId,
-                amountDeltaX18: -amountToLiquidateX18,
-                vQuoteDeltaX18: vars.liquidationPaymentX18
-            });
-            deltas[1] = IProductEngine.ProductDelta({
-                productId: healthGroup.spotId,
-                subaccountId: liquidatorId,
-                amountDeltaX18: amountToLiquidateX18,
-                vQuoteDeltaX18: -vars.liquidationPaymentX18
-            });
-            deltas[2] = IProductEngine.ProductDelta({
-                productId: QUOTE_PRODUCT_ID,
-                subaccountId: txn.liquidateeId,
-                amountDeltaX18: vars.liquidationPaymentX18 +
-                    vars.insuranceCoverX18,
-                vQuoteDeltaX18: 0
-            });
-            deltas[3] = IProductEngine.ProductDelta({
-                productId: QUOTE_PRODUCT_ID,
-                subaccountId: liquidatorId,
-                amountDeltaX18: -vars.liquidationPaymentX18,
-                vQuoteDeltaX18: 0
-            });
-
-            insuranceX18 -= vars.insuranceCoverX18;
-            spotEngine.applyDeltas(deltas);
-
-            // end spot liquidation copied block
-
-            // write perp deltas
-            // in spread liquidation, we do the liquidation payment
-            // on top of liquidating the spot. for perp we simply
-            // transfer the balances at 0 pnl
-            // (ie. vQuoteAmount == amount * perpPrice)
-            int256 perpQuoteDeltaX18 = amountToLiquidateX18.mul(
-                getOraclePriceX18(healthGroup.perpId)
-            );
-
-            int256 excessPerpQuoteDeltaX18 = getLiqPriceX18(
-                healthGroup.perpId,
-                vars.excessPerpToLiquidateX18
-            ).mul(vars.excessPerpToLiquidateX18);
-
-            deltas = new IProductEngine.ProductDelta[](2);
-            deltas[0] = IProductEngine.ProductDelta({
-                productId: healthGroup.perpId,
-                subaccountId: txn.liquidateeId,
-                amountDeltaX18: amountToLiquidateX18 -
-                    vars.excessPerpToLiquidateX18,
-                vQuoteDeltaX18: -perpQuoteDeltaX18 + excessPerpQuoteDeltaX18
-            });
-            deltas[1] = IProductEngine.ProductDelta({
-                productId: healthGroup.perpId,
-                subaccountId: liquidatorId,
-                amountDeltaX18: -amountToLiquidateX18 +
-                    vars.excessPerpToLiquidateX18,
-                vQuoteDeltaX18: perpQuoteDeltaX18 - excessPerpQuoteDeltaX18
-            });
-            perpEngine.applyDeltas(deltas);
-        } else if (txn.mode == uint8(IEndpoint.LiquidationMode.SPOT)) {
-            uint32 productId = healthGroups[txn.healthGroup].spotId;
-            require(
-                productId != QUOTE_PRODUCT_ID,
-                ERR_INVALID_LIQUIDATION_PARAMS
-            );
-            assertLiquidationAmount(
-                summary.spotAmountX18,
-                amountToLiquidateX18
-            );
-            isLiability = summary.spotAmountX18 < 0;
-            (, ISpotEngine.Balance memory quoteBalance) = spotEngine
-                .getStateAndBalance(QUOTE_PRODUCT_ID, txn.liquidateeId);
-
-            vars.liquidationPriceX18 = getLiqPriceX18(
-                productId,
-                amountToLiquidateX18
-            );
-            if (isLiability) {
-                int256 maximumLiquidatableX18 = MathHelper.max(
-                    (quoteBalance.amountX18 + insuranceX18).div(
-                        vars.liquidationPriceX18
-                    ),
-                    0
-                );
-                amountToLiquidateX18 = MathHelper.max(
-                    amountToLiquidateX18,
-                    -maximumLiquidatableX18
-                );
-            }
-            vars.liquidationPaymentX18 = vars.liquidationPriceX18.mul(
-                amountToLiquidateX18
-            );
-
-            // quoteBalance.amountX18 + liquidationPayment18 + insuranceCoverX18 == 0
-            vars.insuranceCoverX18 = (isLiability)
-                ? MathHelper.min(
-                    insuranceX18,
-                    MathHelper.max(
-                        0,
-                        -vars.liquidationPaymentX18 - quoteBalance.amountX18
-                    )
-                )
-                : int256(0);
-
-            IProductEngine.ProductDelta[]
-                memory deltas = new IProductEngine.ProductDelta[](4);
-            deltas[0] = IProductEngine.ProductDelta({
-                productId: productId,
-                subaccountId: txn.liquidateeId,
-                amountDeltaX18: -amountToLiquidateX18,
-                vQuoteDeltaX18: vars.liquidationPaymentX18
-            });
-            deltas[1] = IProductEngine.ProductDelta({
-                productId: productId,
-                subaccountId: liquidatorId,
-                amountDeltaX18: amountToLiquidateX18,
-                vQuoteDeltaX18: -vars.liquidationPaymentX18
-            });
-            deltas[2] = IProductEngine.ProductDelta({
-                productId: QUOTE_PRODUCT_ID,
-                subaccountId: txn.liquidateeId,
-                amountDeltaX18: vars.liquidationPaymentX18 +
-                    vars.insuranceCoverX18,
-                vQuoteDeltaX18: 0
-            });
-            deltas[3] = IProductEngine.ProductDelta({
-                productId: QUOTE_PRODUCT_ID,
-                subaccountId: liquidatorId,
-                amountDeltaX18: -vars.liquidationPaymentX18,
-                vQuoteDeltaX18: 0
-            });
-
-            insuranceX18 -= vars.insuranceCoverX18;
-            spotEngine.applyDeltas(deltas);
-        } else if (txn.mode == uint8(IEndpoint.LiquidationMode.PERP)) {
-            uint32 productId = healthGroups[txn.healthGroup].perpId;
-            require(
-                productId != QUOTE_PRODUCT_ID,
-                ERR_INVALID_LIQUIDATION_PARAMS
-            );
-            assertLiquidationAmount(
-                summary.perpAmountX18,
-                amountToLiquidateX18
-            );
-            vars.liquidationPaymentX18 = getLiqPriceX18(
-                productId,
-                amountToLiquidateX18
-            ).mul(amountToLiquidateX18);
-
-            IProductEngine.ProductDelta[]
-                memory deltas = new IProductEngine.ProductDelta[](2);
-            deltas[0] = IProductEngine.ProductDelta({
-                productId: productId,
-                subaccountId: txn.liquidateeId,
-                amountDeltaX18: -amountToLiquidateX18,
-                vQuoteDeltaX18: vars.liquidationPaymentX18
-            });
-            deltas[1] = IProductEngine.ProductDelta({
-                productId: productId,
-                subaccountId: liquidatorId,
-                amountDeltaX18: amountToLiquidateX18,
-                vQuoteDeltaX18: -vars.liquidationPaymentX18
-            });
-            perpEngine.applyDeltas(deltas);
-        } else {
-            revert(ERR_INVALID_LIQUIDATION_PARAMS);
-        }
-
-        require(_isUnderInitial(txn.liquidateeId), ERR_LIQUIDATED_TOO_MUCH);
-        require(!_isUnderInitial(liquidatorId), ERR_SUBACCT_HEALTH);
-        if (isLiability) {
-            LiquidationStatus status = getLiquidationStatus(
-                spotEngine,
-                perpEngine,
-                txn.liquidateeId
-            );
-
-            require(
-                status != LiquidationStatus.CannotLiquidateLiabilities,
-                ERR_NOT_LIQUIDATABLE_LIABILITIES
-            );
-
-            if (status == LiquidationStatus.CanSocialize) {
-                insuranceX18 = perpEngine.socializeSubaccount(
-                    txn.liquidateeId,
-                    insuranceX18
-                );
-                spotEngine.socializeSubaccount(txn.liquidateeId, insuranceX18);
-            }
-        }
-
-        emit Liquidation(
-            liquidatorId,
-            txn.liquidateeId,
-            // 0 -> spread, 1 -> spot, 2 -> perp
-            txn.mode,
-            txn.healthGroup,
-            txn.amount.fromInt(), // amount that was liquidated
-            // this is the amount of product transferred from liquidatee
-            // to liquidator; this and the following field will have the same sign
-            // if spread, one unit represents one long spot and one short perp
-            // i.e. if amount == -1, it means a short spot and a long perp was liquidated
-            vars.liquidationPaymentX18, // add actual liquidatee quoteDelta
-            // meaning there was a payment of liquidationPaymentX18
-            // from liquidator to liquidatee for the liquidated products
-            vars.insuranceCoverX18
-        );
+    function upgradeClearinghouseLiq(address _clearinghouseLiq)
+        external
+        onlyOwner
+    {
+        clearinghouseLiq = _clearinghouseLiq;
     }
 }

@@ -16,7 +16,7 @@ interface IClearinghouseEventEmitter {
 
     /// @notice Emitted when collateral is modified for a subaccount
     event ModifyCollateral(
-        int256 amount,
+        int128 amount,
         uint64 indexed subaccount,
         uint32 productId
     );
@@ -26,8 +26,8 @@ interface IClearinghouseEventEmitter {
         uint64 indexed liquidateeSubaccount,
         uint8 indexed mode,
         uint32 healthGroup,
-        int256 amountX18,
-        int256 amountQuoteX18,
-        int256 insuranceCoverX18
+        int128 amount,
+        int128 amountQuote,
+        int128 insuranceCover
     );
 }

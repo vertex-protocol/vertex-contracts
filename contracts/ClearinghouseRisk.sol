@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
 import "./interfaces/engine/IProductEngine.sol";
@@ -5,13 +6,13 @@ import "./interfaces/clearinghouse/IClearinghouseState.sol";
 import "./common/Constants.sol";
 import "./common/Errors.sol";
 
-import "prb-math/contracts/PRBMathSD59x18.sol";
 import "./libraries/MathHelper.sol";
+import "./libraries/MathSD21x18.sol";
 import "./EndpointGated.sol";
 import "./libraries/RiskHelper.sol";
 
 abstract contract ClearinghouseRisk is IClearinghouseState, EndpointGated {
-    using PRBMathSD59x18 for int256;
+    using MathSD21x18 for int128;
 
     uint32 maxHealthGroup;
     mapping(uint32 => HealthGroup) healthGroups;
@@ -33,20 +34,20 @@ abstract contract ClearinghouseRisk is IClearinghouseState, EndpointGated {
         RiskStore memory risk = risks[productId];
         return
             RiskHelper.Risk({
-                longWeightInitialX18: int256(risk.longWeightInitial) * 1e9,
-                shortWeightInitialX18: int256(risk.shortWeightInitial) * 1e9,
-                longWeightMaintenanceX18: int256(risk.longWeightMaintenance) *
+                longWeightInitialX18: int128(risk.longWeightInitial) * 1e9,
+                shortWeightInitialX18: int128(risk.shortWeightInitial) * 1e9,
+                longWeightMaintenanceX18: int128(risk.longWeightMaintenance) *
                     1e9,
-                shortWeightMaintenanceX18: int256(risk.shortWeightMaintenance) *
+                shortWeightMaintenanceX18: int128(risk.shortWeightMaintenance) *
                     1e9,
-                largePositionPenaltyX18: int256(risk.largePositionPenalty) * 1e9
+                largePositionPenaltyX18: int128(risk.largePositionPenalty) * 1e9
             });
     }
 
-    function getLiqPriceX18(uint32 productId, int256 amountX18)
+    function getLiqPriceX18(uint32 productId, int128 amount)
         internal
         view
-        returns (int256)
+        returns (int128)
     {
         // we want to use the midpoint of maintenance weight and 1
         RiskHelper.Risk memory risk = getRisk(productId);
@@ -57,25 +58,26 @@ abstract contract ClearinghouseRisk is IClearinghouseState, EndpointGated {
                 (ONE +
                     RiskHelper._getWeightX18(
                         risk,
-                        amountX18,
+                        amount,
                         IProductEngine.HealthType.MAINTENANCE
                     )) / 2
             );
     }
 
-    function getSpreadLiqPriceX18(
-        HealthGroup memory healthGroup,
-        int256 amountX18
-    ) internal view returns (int256) {
+    function getSpreadLiqPriceX18(HealthGroup memory healthGroup, int128 amount)
+        internal
+        view
+        returns (int128)
+    {
         RiskHelper.Risk memory spotRisk = getRisk(healthGroup.spotId);
         RiskHelper.Risk memory perpRisk = getRisk(healthGroup.perpId);
-        int256 spreadPenaltyX18 = RiskHelper._getSpreadPenaltyX18(
+        int128 spreadPenaltyX18 = RiskHelper._getSpreadPenaltyX18(
             spotRisk,
             perpRisk,
-            MathHelper.abs(amountX18),
+            MathHelper.abs(amount),
             IProductEngine.HealthType.MAINTENANCE
         ) / 2;
-        if (amountX18 > 0) {
+        if (amount > 0) {
             return
                 getOraclePriceX18(healthGroup.spotId).mul(
                     ONE - spreadPenaltyX18

@@ -7,17 +7,18 @@ import "hardhat/console.sol";
 import "./common/Constants.sol";
 import "./common/Errors.sol";
 import "./libraries/MathHelper.sol";
+import "./libraries/MathSD21x18.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./interfaces/engine/IProductEngine.sol";
 import "./interfaces/IOffchainBook.sol";
 import "./interfaces/IFeeCalculator.sol";
-import "prb-math/contracts/PRBMathSD59x18.sol";
 import "./interfaces/IEndpoint.sol";
 import "./EndpointGated.sol";
 import "./interfaces/clearinghouse/IClearinghouseState.sol";
 
 abstract contract BaseEngine is IProductEngine, EndpointGated {
-    using PRBMathSD59x18 for int256;
+    using MathSD21x18 for int128;
+
     IClearinghouse internal _clearinghouse;
     IFeeCalculator internal _fees;
     uint32[] internal productIds;
@@ -66,9 +67,9 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         uint32 healthGroup,
         IClearinghouseState.RiskStore memory riskStore,
         address book,
-        int256 sizeIncrement,
-        int256 priceIncrementX18,
-        int256 lpSpreadX18
+        int128 sizeIncrement,
+        int128 priceIncrementX18,
+        int128 lpSpreadX18
     ) internal returns (uint32 productId) {
         require(book != address(0));
 

@@ -4,7 +4,7 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./interfaces/IEndpoint.sol";
 import "./interfaces/IEndpointGated.sol";
-import "prb-math/contracts/PRBMathSD59x18.sol";
+import "./libraries/MathSD21x18.sol";
 import "./common/Constants.sol";
 import "hardhat/console.sol";
 
@@ -19,9 +19,9 @@ abstract contract EndpointGated is OwnableUpgradeable, IEndpointGated {
         return endpoint;
     }
 
-    function getOraclePriceX18(uint32 productId) public view returns (int256) {
+    function getOraclePriceX18(uint32 productId) public view returns (int128) {
         if (productId == QUOTE_PRODUCT_ID) {
-            return PRBMathSD59x18.fromInt(1);
+            return MathSD21x18.fromInt(1);
         }
         return IEndpoint(endpoint).getPriceX18(productId);
     }
@@ -29,15 +29,15 @@ abstract contract EndpointGated is OwnableUpgradeable, IEndpointGated {
     function getOraclePerpIndexPriceX18(uint32 productId)
         public
         view
-        returns (int256)
+        returns (int128)
     {
         if (productId == QUOTE_PRODUCT_ID) {
-            return PRBMathSD59x18.fromInt(1);
+            return MathSD21x18.fromInt(1);
         }
         return IEndpoint(endpoint).getPerpIndexPriceX18(productId);
     }
 
-    function getOracleTime() internal view returns (uint256) {
+    function getOracleTime() internal view returns (uint128) {
         return IEndpoint(endpoint).getTime();
     }
 

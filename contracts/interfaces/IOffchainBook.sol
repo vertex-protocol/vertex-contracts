@@ -9,26 +9,26 @@ interface IOffchainBook {
         // original order information
         bytes32 indexed digest,
         uint64 indexed subaccount,
-        int256 priceX18,
-        int256 amount,
+        int128 priceX18,
+        int128 amount,
         uint64 expiration,
         uint64 nonce,
         // whether this order is taking or making
         bool isTaker,
         // amount paid in fees (in quote)
-        int256 feeAmountX18,
+        int128 feeAmount,
         // change in this subaccount's base balance from this fill
-        int256 baseDeltaX18,
+        int128 baseDelta,
         // change in this subaccount's quote balance from this fill
-        int256 quoteDeltaX18
+        int128 quoteDelta
     );
 
     struct Market {
         uint32 productId;
-        int256 sizeIncrement;
-        int256 priceIncrementX18;
-        int256 lpSpreadX18;
-        int256 collectedFeesX18;
+        int128 sizeIncrement;
+        int128 priceIncrementX18;
+        int128 lpSpreadX18;
+        int128 collectedFees;
     }
 
     function initialize(
@@ -38,12 +38,12 @@ interface IOffchainBook {
         address _admin,
         IFeeCalculator _fees,
         uint32 _productId,
-        int256 _sizeIncrement,
-        int256 _priceIncrementX18,
-        int256 _lpSpreadX18
+        int128 _sizeIncrement,
+        int128 _priceIncrementX18,
+        int128 _lpSpreadX18
     ) external;
 
-    function getDigest(IEndpoint.Order memory order, bool isCancellation)
+    function getDigest(IEndpoint.Order memory order)
         external
         view
         returns (bytes32);

@@ -6,7 +6,7 @@ import "@openzeppelin/contracts-upgradeable/utils/cryptography/draft-EIP712Upgra
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "./interfaces/engine/IProductEngine.sol";
 import "./interfaces/IFeeCalculator.sol";
-import "prb-math/contracts/PRBMathSD59x18.sol";
+import "./libraries/MathSD21x18.sol";
 import "./common/Constants.sol";
 import "./libraries/MathHelper.sol";
 import "./OffchainBook.sol";
@@ -20,17 +20,17 @@ import "hardhat/console.sol";
 // normal calculation for factor looks like: e^(-timedelta/600)
 // change this to (e^-1/600)^(timedelta)
 // TIME_CONSTANT -> e^(-1/600)
-int256 constant EMA_TIME_CONSTANT_X18 = 998334721450938752;
+int128 constant EMA_TIME_CONSTANT_X18 = 998334721450938752;
 
 contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
-    using PRBMathSD59x18 for int256;
+    using MathSD21x18 for int128;
 
     IClearinghouse public clearinghouse;
     IProductEngine private engine;
     IFeeCalculator internal fees;
     Market public market;
 
-    mapping(bytes32 => int256) public filledAmounts;
+    mapping(bytes32 => int128) public filledAmounts;
 
     function initialize(
         IClearinghouse _clearinghouse,
@@ -39,9 +39,9 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         address _admin,
         IFeeCalculator _fees,
         uint32 _productId,
-        int256 _sizeIncrement,
-        int256 _priceIncrementX18,
-        int256 _lpSpreadX18
+        int128 _sizeIncrement,
+        int128 _priceIncrementX18,
+        int128 _lpSpreadX18
     ) external initializer {
         __Ownable_init();
         setEndpoint(_endpoint);
@@ -57,18 +57,17 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             sizeIncrement: _sizeIncrement,
             priceIncrementX18: _priceIncrementX18,
             lpSpreadX18: _lpSpreadX18,
-            collectedFeesX18: 0
+            collectedFees: 0
         });
     }
 
-    function getDigest(IEndpoint.Order memory order, bool isCancellation)
+    function getDigest(IEndpoint.Order memory order)
         public
         view
         returns (bytes32)
     {
-        string memory structType = isCancellation
-            ? "Cancellation(address sender,string subaccountName,int256 priceX18,int256 amount,uint64 expiration,uint64 nonce)"
-            : "Order(address sender,string subaccountName,int256 priceX18,int256 amount,uint64 expiration,uint64 nonce)";
+        string
+            memory structType = "Order(address sender,string subaccountName,int128 priceX18,int128 amount,uint64 expiration,uint64 nonce)";
         return
             _hashTypedDataV4(
                 keccak256(
@@ -100,7 +99,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         bytes32 orderDigest
     ) internal view returns (bool) {
         IEndpoint.Order memory order = signedOrder.order;
-        int256 filledAmount = filledAmounts[orderDigest];
+        int128 filledAmount = filledAmounts[orderDigest];
         order.amount -= filledAmount;
         return
             (order.priceX18 % _market.priceIncrementX18 == 0) &&
@@ -111,18 +110,18 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             (order.expiration > getOracleTime());
     }
 
-    function _feeAmountX18(
+    function _feeAmount(
         uint64 subaccountId,
         uint32 productId,
-        int256 amountX18,
+        int128 amount,
         bool taker
-    ) internal returns (int256, int256) {
-        int256 keepRateX18 = ONE -
+    ) internal view returns (int128, int128) {
+        int128 keepRateX18 = ONE -
             fees.getFeeFractionX18(subaccountId, productId, taker);
-        int256 newAmountX18 = (amountX18 > 0)
-            ? amountX18.mul(keepRateX18)
-            : amountX18.div(keepRateX18);
-        return (amountX18 - newAmountX18, newAmountX18);
+        int128 newAmount = (amount > 0)
+            ? amount.mul(keepRateX18)
+            : amount.div(keepRateX18);
+        return (amount - newAmount, newAmount);
     }
 
     struct OrdersInfo {
@@ -130,15 +129,15 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         bytes32 makerDigest;
         uint64 takerSubaccountId;
         uint64 makerSubaccountId;
-        int256 makerAmount;
+        int128 makerAmount;
     }
 
     function _matchOrderAMM(
         Market memory _market,
         IEndpoint.SignedOrder memory taker,
         uint64 takerSubaccountId
-    ) internal returns (int256, int256) {
-        (int256 baseSwappedX18, int256 quoteSwappedX18) = engine.swapLp(
+    ) internal returns (int128, int128) {
+        (int128 baseSwapped, int128 quoteSwapped) = engine.swapLp(
             _market.productId,
             takerSubaccountId,
             // positive amount == buying base
@@ -150,8 +149,8 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             _market.lpSpreadX18
         );
 
-        taker.order.amount += baseSwappedX18.toInt();
-        return (-baseSwappedX18, -quoteSwappedX18);
+        taker.order.amount += baseSwapped;
+        return (-baseSwapped, -quoteSwapped);
     }
 
     function _matchOrderOrder(
@@ -159,30 +158,27 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         IEndpoint.Order memory taker,
         IEndpoint.Order memory maker,
         OrdersInfo memory ordersInfo
-    ) internal returns (int256 takerAmountDeltaX18, int256 takerQuoteDeltaX18) {
+    ) internal returns (int128 takerAmountDelta, int128 takerQuoteDelta) {
         // execution happens at the maker's price
-        int256 takerAmountDelta;
-
         if (taker.amount < 0) {
             takerAmountDelta = MathHelper.max(taker.amount, -maker.amount);
         } else {
             takerAmountDelta = MathHelper.min(taker.amount, -maker.amount);
         }
 
-        takerAmountDeltaX18 = takerAmountDelta.fromInt();
-        int256 makerQuoteDeltaX18 = takerAmountDeltaX18.mul(maker.priceX18);
+        int128 makerQuoteDelta = takerAmountDelta.mul(maker.priceX18);
 
-        takerQuoteDeltaX18 = -makerQuoteDeltaX18;
+        takerQuoteDelta = -makerQuoteDelta;
 
         // apply the maker fee
-        int256 makerFeeX18;
-        (makerFeeX18, makerQuoteDeltaX18) = _feeAmountX18(
+        int128 makerFee;
+        (makerFee, makerQuoteDelta) = _feeAmount(
             ordersInfo.makerSubaccountId,
             _market.productId,
-            makerQuoteDeltaX18,
+            makerQuoteDelta,
             false
         );
-        _market.collectedFeesX18 += makerFeeX18;
+        _market.collectedFees += makerFee;
 
         taker.amount -= takerAmountDelta;
         maker.amount += takerAmountDelta;
@@ -194,14 +190,14 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         deltas[0] = IProductEngine.ProductDelta({
             productId: _market.productId,
             subaccountId: ordersInfo.makerSubaccountId,
-            amountDeltaX18: -takerAmountDeltaX18,
-            vQuoteDeltaX18: makerQuoteDeltaX18
+            amountDelta: -takerAmountDelta,
+            vQuoteDelta: makerQuoteDelta
         });
         deltas[1] = IProductEngine.ProductDelta({
             productId: QUOTE_PRODUCT_ID,
             subaccountId: ordersInfo.makerSubaccountId,
-            amountDeltaX18: makerQuoteDeltaX18,
-            vQuoteDeltaX18: 0
+            amountDelta: makerQuoteDelta,
+            vQuoteDelta: 0
         });
 
         engine.applyDeltas(deltas);
@@ -214,9 +210,9 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             maker.expiration,
             maker.nonce,
             false,
-            makerFeeX18,
-            -takerAmountDeltaX18,
-            makerQuoteDeltaX18
+            makerFee,
+            -takerAmountDelta,
+            makerQuoteDelta
         );
     }
 
@@ -225,8 +221,8 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         onlyEndpoint
     {
         Market memory _market = market;
-        bytes32 takerDigest = getDigest(txn.taker.order, false);
-        int256 takerAmount = txn.taker.order.amount;
+        bytes32 takerDigest = getDigest(txn.taker.order);
+        int128 takerAmount = txn.taker.order.amount;
         _validateOrder(_market, txn.taker, takerDigest);
         uint64 takerSubaccountId = clearinghouse.getSubaccountId(
             txn.taker.order.sender,
@@ -234,20 +230,21 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         );
 
         require(takerSubaccountId != 0, ERR_INVALID_TAKER);
-        (
-            int256 takerAmountDeltaX18,
-            int256 takerQuoteDeltaX18
-        ) = _matchOrderAMM(_market, txn.taker, takerSubaccountId);
+        (int128 takerAmountDelta, int128 takerQuoteDelta) = _matchOrderAMM(
+            _market,
+            txn.taker,
+            takerSubaccountId
+        );
 
         // apply the taker fee
-        int256 takerFeeX18;
-        (takerFeeX18, takerQuoteDeltaX18) = _feeAmountX18(
+        int128 takerFee;
+        (takerFee, takerQuoteDelta) = _feeAmount(
             takerSubaccountId,
             _market.productId,
-            takerQuoteDeltaX18,
+            takerQuoteDelta,
             true
         );
-        _market.collectedFeesX18 += takerFeeX18;
+        _market.collectedFees += takerFee;
 
         IProductEngine.ProductDelta[]
             memory deltas = new IProductEngine.ProductDelta[](2);
@@ -256,20 +253,20 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         deltas[0] = IProductEngine.ProductDelta({
             productId: _market.productId,
             subaccountId: takerSubaccountId,
-            amountDeltaX18: takerAmountDeltaX18,
-            vQuoteDeltaX18: takerQuoteDeltaX18
+            amountDelta: takerAmountDelta,
+            vQuoteDelta: takerQuoteDelta
         });
         deltas[1] = IProductEngine.ProductDelta({
             productId: QUOTE_PRODUCT_ID,
             subaccountId: takerSubaccountId,
-            amountDeltaX18: takerQuoteDeltaX18,
-            vQuoteDeltaX18: 0
+            amountDelta: takerQuoteDelta,
+            vQuoteDelta: 0
         });
 
         engine.applyDeltas(deltas);
 
         require(
-            clearinghouse.getHealthX18(
+            clearinghouse.getHealth(
                 takerSubaccountId,
                 IProductEngine.HealthType.INITIAL
             ) >= 0,
@@ -284,11 +281,11 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             txn.taker.order.expiration,
             txn.taker.order.nonce,
             true,
-            takerFeeX18,
-            takerAmountDeltaX18,
-            takerQuoteDeltaX18
+            takerFee,
+            takerAmountDelta,
+            takerQuoteDelta
         );
-        market = _market;
+        market.collectedFees = _market.collectedFees;
         filledAmounts[takerDigest] = takerAmount - txn.taker.order.amount;
     }
 
@@ -301,8 +298,8 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         IEndpoint.SignedOrder memory maker = txn.maker;
 
         OrdersInfo memory ordersInfo = OrdersInfo({
-            takerDigest: getDigest(taker.order, false),
-            makerDigest: getDigest(maker.order, false),
+            takerDigest: getDigest(taker.order),
+            makerDigest: getDigest(maker.order),
             takerSubaccountId: clearinghouse.getSubaccountId(
                 taker.order.sender,
                 taker.order.subaccountName
@@ -314,7 +311,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             makerAmount: maker.order.amount
         });
 
-        int256 takerAmount = taker.order.amount;
+        int128 takerAmount = taker.order.amount;
 
         require(
             _validateOrder(_market, taker, ordersInfo.takerDigest),
@@ -344,11 +341,11 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             );
         }
 
-        int256 takerAmountDeltaX18;
-        int256 takerQuoteDeltaX18;
+        int128 takerAmountDelta;
+        int128 takerQuoteDelta;
 
         if (txn.amm) {
-            (takerAmountDeltaX18, takerQuoteDeltaX18) = _matchOrderAMM(
+            (takerAmountDelta, takerQuoteDelta) = _matchOrderAMM(
                 _market,
                 taker,
                 ordersInfo.takerSubaccountId
@@ -356,25 +353,25 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
         }
 
         {
-            (int256 baseDeltaX18, int256 quoteDeltaX18) = _matchOrderOrder(
+            (int128 baseDelta, int128 quoteDelta) = _matchOrderOrder(
                 _market,
                 taker.order,
                 maker.order,
                 ordersInfo
             );
-            takerAmountDeltaX18 += baseDeltaX18;
-            takerQuoteDeltaX18 += quoteDeltaX18;
+            takerAmountDelta += baseDelta;
+            takerQuoteDelta += quoteDelta;
         }
 
         // apply the taker fee
-        int256 takerFeeX18;
-        (takerFeeX18, takerQuoteDeltaX18) = _feeAmountX18(
+        int128 takerFee;
+        (takerFee, takerQuoteDelta) = _feeAmount(
             ordersInfo.takerSubaccountId,
             _market.productId,
-            takerQuoteDeltaX18,
+            takerQuoteDelta,
             true
         );
-        _market.collectedFeesX18 += takerFeeX18;
+        _market.collectedFees += takerFee;
 
         {
             IProductEngine.ProductDelta[]
@@ -384,28 +381,28 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             deltas[0] = IProductEngine.ProductDelta({
                 productId: _market.productId,
                 subaccountId: ordersInfo.takerSubaccountId,
-                amountDeltaX18: takerAmountDeltaX18,
-                vQuoteDeltaX18: takerQuoteDeltaX18
+                amountDelta: takerAmountDelta,
+                vQuoteDelta: takerQuoteDelta
             });
             deltas[1] = IProductEngine.ProductDelta({
                 productId: QUOTE_PRODUCT_ID,
                 subaccountId: ordersInfo.takerSubaccountId,
-                amountDeltaX18: takerQuoteDeltaX18,
-                vQuoteDeltaX18: 0
+                amountDelta: takerQuoteDelta,
+                vQuoteDelta: 0
             });
 
             engine.applyDeltas(deltas);
         }
 
         require(
-            clearinghouse.getHealthX18(
+            clearinghouse.getHealth(
                 ordersInfo.takerSubaccountId,
                 IProductEngine.HealthType.INITIAL
             ) >= 0,
             ERR_INVALID_TAKER
         );
         require(
-            clearinghouse.getHealthX18(
+            clearinghouse.getHealth(
                 ordersInfo.makerSubaccountId,
                 IProductEngine.HealthType.INITIAL
             ) >= 0,
@@ -420,12 +417,12 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             txn.taker.order.expiration,
             txn.taker.order.nonce,
             true,
-            takerFeeX18,
-            takerAmountDeltaX18,
-            takerQuoteDeltaX18
+            takerFee,
+            takerAmountDelta,
+            takerQuoteDelta
         );
 
-        market = _market;
+        market.collectedFees = _market.collectedFees;
         filledAmounts[ordersInfo.takerDigest] =
             takerAmount -
             taker.order.amount;
@@ -441,7 +438,7 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             txn.subaccountName
         );
         require(takerSubaccountId != 0, ERR_INVALID_TAKER);
-        (int256 takerAmountDeltaX18, int256 takerQuoteDeltaX18) = engine.swapLp(
+        (int128 takerAmountDelta, int128 takerQuoteDelta) = engine.swapLp(
             _market.productId,
             takerSubaccountId,
             txn.amount,
@@ -449,17 +446,17 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             _market.sizeIncrement,
             _market.lpSpreadX18
         );
-        takerAmountDeltaX18 = -takerAmountDeltaX18;
-        takerQuoteDeltaX18 = -takerQuoteDeltaX18;
+        takerAmountDelta = -takerAmountDelta;
+        takerQuoteDelta = -takerQuoteDelta;
 
-        int256 takerFeeX18;
-        (takerFeeX18, takerQuoteDeltaX18) = _feeAmountX18(
+        int128 takerFee;
+        (takerFee, takerQuoteDelta) = _feeAmount(
             takerSubaccountId,
             _market.productId,
-            takerQuoteDeltaX18,
+            takerQuoteDelta,
             true
         );
-        _market.collectedFeesX18 += takerFeeX18;
+        _market.collectedFees += takerFee;
 
         {
             IProductEngine.ProductDelta[]
@@ -469,48 +466,48 @@ contract OffchainBook is IOffchainBook, EndpointGated, EIP712Upgradeable {
             deltas[0] = IProductEngine.ProductDelta({
                 productId: _market.productId,
                 subaccountId: takerSubaccountId,
-                amountDeltaX18: takerAmountDeltaX18,
-                vQuoteDeltaX18: takerQuoteDeltaX18
+                amountDelta: takerAmountDelta,
+                vQuoteDelta: takerQuoteDelta
             });
             deltas[1] = IProductEngine.ProductDelta({
                 productId: QUOTE_PRODUCT_ID,
                 subaccountId: takerSubaccountId,
-                amountDeltaX18: takerQuoteDeltaX18,
-                vQuoteDeltaX18: 0
+                amountDelta: takerQuoteDelta,
+                vQuoteDelta: 0
             });
 
             engine.applyDeltas(deltas);
         }
         require(
-            clearinghouse.getHealthX18(
+            clearinghouse.getHealth(
                 takerSubaccountId,
                 IProductEngine.HealthType.INITIAL
             ) >= 0,
             ERR_INVALID_TAKER
         );
-        market = _market;
+        market.collectedFees = _market.collectedFees;
     }
 
     function dumpFees() external onlyEndpoint {
         IProductEngine.ProductDelta[]
             memory feeAccDeltas = new IProductEngine.ProductDelta[](1);
-        int256 feesAmountX18 = market.collectedFeesX18;
+        int128 feesAmount = market.collectedFees;
         // https://en.wikipedia.org/wiki/Design_Patterns
-        market.collectedFeesX18 = 0;
+        market.collectedFees = 0;
 
         if (engine.getEngineType() == IProductEngine.EngineType.SPOT) {
             feeAccDeltas[0] = IProductEngine.ProductDelta({
                 productId: QUOTE_PRODUCT_ID,
                 subaccountId: FEES_SUBACCOUNT_ID,
-                amountDeltaX18: feesAmountX18,
-                vQuoteDeltaX18: 0
+                amountDelta: feesAmount,
+                vQuoteDelta: 0
             });
         } else {
             feeAccDeltas[0] = IProductEngine.ProductDelta({
                 productId: market.productId,
                 subaccountId: FEES_SUBACCOUNT_ID,
-                amountDeltaX18: 0,
-                vQuoteDeltaX18: feesAmountX18
+                amountDelta: 0,
+                vQuoteDelta: feesAmount
             });
         }
 

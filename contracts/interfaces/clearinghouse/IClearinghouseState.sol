@@ -23,72 +23,19 @@ interface IClearinghouseState {
     }
 
     struct HealthVars {
-        int256 spotAmountX18;
-        int256 perpAmountX18;
+        int128 spotAmount;
+        int128 perpAmount;
         // 1 unit of basis amount is 1 unit long spot and 1 unit short perp
-        int256 basisAmountX18;
-        int256 spotInLpAmountX18;
-        int256 perpInLpAmountX18;
-        int256 spotPriceX18;
-        int256 perpPriceX18;
+        int128 basisAmount;
+        int128 spotInLpAmount;
+        int128 perpInLpAmount;
+        int128 spotPriceX18;
+        int128 perpPriceX18;
         RiskHelper.Risk spotRisk;
         RiskHelper.Risk perpRisk;
     }
 
     function getHealthGroups() external view returns (HealthGroup[] memory);
-
-    /// @notice Retrieve quote ERC20 address
-    function getQuote() external view returns (address);
-
-    /// @notice Returns all supported engine types for the clearinghouse
-    function getSupportedEngines()
-        external
-        view
-        returns (IProductEngine.EngineType[] memory);
-
-    /// @notice Returns the registered engine address by type
-    function getEngineByType(IProductEngine.EngineType engineType)
-        external
-        view
-        returns (address);
-
-    /// @notice Returns the engine associated with a product ID
-    function getEngineByProduct(uint32 productId)
-        external
-        view
-        returns (address);
-
-    /// @notice Returns the orderbook associated with a product ID
-    function getOrderbook(uint32 productId) external view returns (address);
-
-    /// @notice Returns number of registered products
-    function getNumProducts() external view returns (uint32);
-
-    /// @notice Returns number of subaccounts created
-    function getNumSubaccounts() external view returns (uint64);
-
-    /// @notice Gets the subaccount ID associated with an address
-    /// @notice IDs start at 1; errors if the subaccount does not exist
-    function getSubaccountId(address owner, string memory subaccountName)
-        external
-        view
-        returns (uint64);
-
-    /// @notice Gets the address associated with a subaccount ID
-    /// @notice Null address indicates that the subaccount does not exist
-    function getSubaccountOwner(uint64 subaccountId)
-        external
-        view
-        returns (address);
-
-    /// @notice Returns health for the subaccount across all engines
-    function getHealthX18(
-        uint64 subaccountId,
-        IProductEngine.HealthType healthType
-    ) external view returns (int256);
-
-    /// @notice Returns the amount of insurance remaining in this clearinghouse
-    function getInsuranceX18() external view returns (int256);
 
     function getRisk(uint32 productId)
         external

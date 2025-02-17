@@ -6,38 +6,43 @@ import "./IProductEngine.sol";
 interface ISpotEngine is IProductEngine {
     struct Config {
         address token;
-        int256 interestInflectionUtilX18;
-        int256 interestFloorX18;
-        int256 interestSmallCapX18;
-        int256 interestLargeCapX18;
+        int128 interestInflectionUtilX18;
+        int128 interestFloorX18;
+        int128 interestSmallCapX18;
+        int128 interestLargeCapX18;
     }
 
     struct State {
-        int256 cumulativeDepositsMultiplierX18;
-        int256 cumulativeBorrowsMultiplierX18;
-        int256 totalDepositsNormalizedX18;
-        int256 totalBorrowsNormalizedX18;
+        int128 cumulativeDepositsMultiplierX18;
+        int128 cumulativeBorrowsMultiplierX18;
+        int128 totalDepositsNormalized;
+        int128 totalBorrowsNormalized;
     }
 
     struct Balance {
-        int256 amountX18;
-        int256 lastCumulativeMultiplierX18;
+        int128 amount;
+        int128 lastCumulativeMultiplierX18;
     }
 
     struct LpState {
-        int256 supply;
+        int128 supply;
         Balance quote;
         Balance base;
     }
 
     struct LpBalance {
-        int256 amountX18;
+        int128 amount;
     }
 
     function getStateAndBalance(uint32 productId, uint64 subaccountId)
         external
         view
         returns (State memory, Balance memory);
+
+    function hasBalance(uint32 productId, uint64 subaccountId)
+        external
+        view
+        returns (bool);
 
     function getStatesAndBalances(uint32 productId, uint64 subaccountId)
         external
@@ -51,8 +56,11 @@ interface ISpotEngine is IProductEngine {
 
     function getConfig(uint32 productId) external view returns (Config memory);
 
-    function getWithdrawTransferAmount(uint32 productId, uint256 amount)
+    function getWithdrawTransferAmount(uint32 productId, uint128 amount)
         external
         view
-        returns (uint256);
+        returns (uint128);
+
+    // TODO: could move utilization ratio tracking off chain and save some gas
+    function updateStates(uint128 dt) external;
 }

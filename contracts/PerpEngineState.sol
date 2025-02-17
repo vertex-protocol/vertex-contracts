@@ -1,16 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
 import "./interfaces/engine/IPerpEngine.sol";
 import "./BaseEngine.sol";
 
-int256 constant EMA_TIME_CONSTANT_X18 = 998334721450938752;
-int256 constant FUNDING_PERIOD_X18 = 28800_000000000000000000; // 8 hours
+int128 constant EMA_TIME_CONSTANT_X18 = 998334721450938752;
+int128 constant FUNDING_PERIOD_X18 = 28800_000000000000000000; // 8 hours
 
 // we will want to config this later, but for now this is global and a percentage
-int256 constant MAX_PRICE_DIFF_PERCENT_X18 = 100000000000000000; // 0.1
+int128 constant MAX_PRICE_DIFF_PERCENT_X18 = 100000000000000000; // 0.1
 
 abstract contract PerpEngineState is IPerpEngine, BaseEngine {
-    using PRBMathSD59x18 for int256;
+    using MathSD21x18 for int128;
 
     mapping(uint32 => State) public states;
     mapping(uint32 => mapping(uint64 => Balance)) public balances;
@@ -21,29 +22,27 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
     function _updateBalance(
         State memory state,
         Balance memory balance,
-        int256 balanceDeltaX18,
-        int256 vQuoteDeltaX18
+        int128 balanceDelta,
+        int128 vQuoteDelta
     ) internal pure {
         // pre update
-        state.openInterestX18 -= (balance.amountX18 > 0)
-            ? balance.amountX18
-            : int256(0);
-        int256 cumulativeFundingAmountX18 = (balance.amountX18 > 0)
+        state.openInterest -= (balance.amount > 0) ? balance.amount : int128(0);
+        int128 cumulativeFundingAmountX18 = (balance.amount > 0)
             ? state.cumulativeFundingLongX18
             : state.cumulativeFundingShortX18;
-        int256 diffX18 = cumulativeFundingAmountX18 -
+        int128 diffX18 = cumulativeFundingAmountX18 -
             balance.lastCumulativeFundingX18;
-        int256 deltaQuoteX18 = vQuoteDeltaX18 - diffX18.mul(balance.amountX18);
+        int128 deltaQuote = vQuoteDelta - diffX18.mul(balance.amount);
 
         // apply delta
-        balance.amountX18 += balanceDeltaX18;
+        balance.amount += balanceDelta;
 
         // apply vquote
-        balance.vQuoteBalanceX18 += deltaQuoteX18;
+        balance.vQuoteBalance += deltaQuote;
 
         // post update
-        if (balance.amountX18 > 0) {
-            state.openInterestX18 += balance.amountX18;
+        if (balance.amount > 0) {
+            state.openInterest += balance.amount;
             balance.lastCumulativeFundingX18 = state.cumulativeFundingLongX18;
         } else {
             balance.lastCumulativeFundingX18 = state.cumulativeFundingShortX18;
@@ -55,9 +54,9 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         LpBalance memory lpBalance,
         Balance memory balance
     ) internal pure {
-        int256 vQuoteDeltaX18 = (lpState.cumulativeFundingPerLpX18 -
-            lpBalance.lastCumulativeFundingX18).mul(lpBalance.amountX18);
-        balance.vQuoteBalanceX18 += vQuoteDeltaX18;
+        int128 vQuoteDelta = (lpState.cumulativeFundingPerLpX18 -
+            lpBalance.lastCumulativeFundingX18).mul(lpBalance.amount);
+        balance.vQuoteBalance += vQuoteDelta;
         lpBalance.lastCumulativeFundingX18 = lpState.cumulativeFundingPerLpX18;
     }
 
@@ -70,6 +69,17 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         Balance memory balance = balances[productId][subaccountId];
         _updateBalance(state, balance, 0, 0);
         return (state, balance);
+    }
+
+    function hasBalance(uint32 productId, uint64 subaccountId)
+        external
+        view
+        returns (bool)
+    {
+        return
+            balances[productId][subaccountId].amount != 0 ||
+            balances[productId][subaccountId].vQuoteBalance != 0 ||
+            lpBalances[productId][subaccountId].amount != 0;
     }
 
     function getStatesAndBalances(uint32 productId, uint64 subaccountId)
@@ -92,28 +102,30 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         return (lpState, lpBalance, state, balance);
     }
 
-    function getMarkPriceX18(uint32 productId) public view returns (int256) {
+    function getMarkPriceX18(uint32 productId) public view returns (int128) {
         LpState memory lpState = lpStates[productId];
         // if no instantaneous price available just use the spot index price
         // and don't charge funding
         if (lpState.base == 0) {
             return getOraclePerpIndexPriceX18(productId);
         }
-        return lpState.quote.fromInt() / lpState.base;
+        return lpState.quote.div(lpState.base);
     }
 
-    function updateStates(uint256 dt) external onlyEndpoint {
+    function updateStates(uint128 dt, int128[] calldata avgPriceDiffs)
+        external
+        onlyEndpoint
+    {
         for (uint32 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
             LpState memory lpState = lpStates[productId];
             State memory state = states[productId];
 
             {
-                int256 indexPriceX18 = getOraclePerpIndexPriceX18(productId);
+                int128 indexPriceX18 = getOraclePerpIndexPriceX18(productId);
 
                 // cap this price diff
-                int256 priceDiffX18 = getMarkPriceX18(productId) -
-                    indexPriceX18;
+                int128 priceDiffX18 = avgPriceDiffs[i];
                 if (
                     priceDiffX18.abs() >
                     MAX_PRICE_DIFF_PERCENT_X18.mul(indexPriceX18)
@@ -124,24 +136,24 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
                         : -MAX_PRICE_DIFF_PERCENT_X18.mul(indexPriceX18);
                 }
 
-                int256 paymentAmountX18 = priceDiffX18
-                    .mul(int256(dt).fromInt())
+                int128 paymentAmount = priceDiffX18
+                    .mul(int128(dt).fromInt())
                     .div(FUNDING_PERIOD_X18);
-                state.cumulativeFundingLongX18 += paymentAmountX18;
-                state.cumulativeFundingShortX18 += paymentAmountX18;
+                state.cumulativeFundingLongX18 += paymentAmount;
+                state.cumulativeFundingShortX18 += paymentAmount;
             }
 
             {
                 Balance memory balance = Balance({
-                    amountX18: lpState.base.fromInt(),
-                    vQuoteBalanceX18: 0,
+                    amount: lpState.base,
+                    vQuoteBalance: 0,
                     lastCumulativeFundingX18: lpState.lastCumulativeFundingX18
                 });
                 _updateBalance(state, balance, 0, 0);
                 if (lpState.supply != 0) {
                     lpState.cumulativeFundingPerLpX18 += balance
-                        .vQuoteBalanceX18
-                        .div(lpState.supply.fromInt());
+                        .vQuoteBalance
+                        .div(lpState.supply);
                 }
                 lpState.lastCumulativeFundingX18 = state
                     .cumulativeFundingLongX18;

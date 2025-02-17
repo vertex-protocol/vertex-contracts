@@ -5,37 +5,42 @@ import "./IProductEngine.sol";
 
 interface IPerpEngine is IProductEngine {
     struct State {
-        int256 cumulativeFundingLongX18;
-        int256 cumulativeFundingShortX18;
-        int256 availableSettleX18;
-        int256 openInterestX18;
+        int128 cumulativeFundingLongX18;
+        int128 cumulativeFundingShortX18;
+        int128 availableSettle;
+        int128 openInterest;
     }
 
     struct Balance {
-        int256 amountX18;
-        int256 vQuoteBalanceX18;
-        int256 lastCumulativeFundingX18;
+        int128 amount;
+        int128 vQuoteBalance;
+        int128 lastCumulativeFundingX18;
     }
 
     struct LpState {
-        int256 supply;
-        int256 lastCumulativeFundingX18;
-        int256 cumulativeFundingPerLpX18;
-        int256 base;
-        int256 quote;
+        int128 supply;
+        int128 lastCumulativeFundingX18;
+        int128 cumulativeFundingPerLpX18;
+        int128 base;
+        int128 quote;
     }
 
     struct LpBalance {
-        int256 amountX18;
+        int128 amount;
         // NOTE: funding payments should be rolled
-        // into Balance.vQuoteBalanceX18;
-        int256 lastCumulativeFundingX18;
+        // into Balance.vQuoteBalance;
+        int128 lastCumulativeFundingX18;
     }
 
     function getStateAndBalance(uint32 productId, uint64 subaccountId)
         external
         view
         returns (State memory, Balance memory);
+
+    function hasBalance(uint32 productId, uint64 subaccountId)
+        external
+        view
+        returns (bool);
 
     function getStatesAndBalances(uint32 productId, uint64 subaccountId)
         external
@@ -47,22 +52,22 @@ interface IPerpEngine is IProductEngine {
             Balance memory
         );
 
-    /// @dev Returns amount settled in X18 and emits SettlePnl events for each product
-    function settlePnl(uint64 subaccountId) external returns (int256);
+    /// @dev Returns amount settled and emits SettlePnl events for each product
+    function settlePnl(uint64 subaccountId) external returns (int128);
 
     /// @notice Emitted during perp settlement
-    event SettlePnl(uint64 indexed subaccount, uint32 productId, int256 amount);
+    event SettlePnl(uint64 indexed subaccount, uint32 productId, int128 amount);
 
     function getSettlementState(uint32 productId, uint64 subaccountId)
         external
         view
         returns (
-            int256 availableSettleX18,
+            int128 availableSettle,
             LpState memory lpState,
             LpBalance memory lpBalance,
             State memory state,
             Balance memory balance
         );
 
-    function getMarkPriceX18(uint32 productId) external view returns (int256);
+    function updateStates(uint128 dt, int128[] calldata avgPriceDiffs) external;
 }

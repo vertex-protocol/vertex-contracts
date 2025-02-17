@@ -1,22 +1,21 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
 import "./PerpEngineState.sol";
 
 abstract contract PerpEngineLp is PerpEngineState {
-    using PRBMathSD59x18 for int256;
+    using MathSD21x18 for int128;
 
     function mintLp(
         uint32 productId,
         uint64 subaccountId,
-        int256 amountBaseX18,
-        int256 quoteAmountLowX18,
-        int256 quoteAmountHighX18
+        int128 amountBase,
+        int128 quoteAmountLow,
+        int128 quoteAmountHigh
     ) external {
         checkCanApplyDeltas();
         require(
-            amountBaseX18 > 0 &&
-                quoteAmountLowX18 > 0 &&
-                quoteAmountHighX18 > 0,
+            amountBase > 0 && quoteAmountLow > 0 && quoteAmountHigh > 0,
             ERR_INVALID_LP_AMOUNT
         );
 
@@ -27,30 +26,25 @@ abstract contract PerpEngineLp is PerpEngineState {
             Balance memory balance
         ) = getStatesAndBalances(productId, subaccountId);
 
-        int256 amountQuoteX18 = (lpState.base == 0)
-            ? amountBaseX18.mul(getOraclePriceX18(productId)).ceil()
-            : amountBaseX18
-                .mul(lpState.quote.fromInt().div(lpState.base.fromInt()))
-                .ceil();
-        require(amountQuoteX18 >= quoteAmountLowX18, ERR_SLIPPAGE_TOO_HIGH);
-        require(amountQuoteX18 <= quoteAmountHighX18, ERR_SLIPPAGE_TOO_HIGH);
+        int128 amountQuote = (lpState.base == 0)
+            ? amountBase.mul(getOraclePriceX18(productId))
+            : amountBase.mul(lpState.quote.div(lpState.base));
+        require(amountQuote >= quoteAmountLow, ERR_SLIPPAGE_TOO_HIGH);
+        require(amountQuote <= quoteAmountHigh, ERR_SLIPPAGE_TOO_HIGH);
 
-        int256 toMint;
+        int128 toMint;
         if (lpState.supply == 0) {
-            toMint = amountBaseX18.toInt() + amountQuoteX18.toInt();
+            toMint = amountBase + amountQuote;
         } else {
-            toMint = amountBaseX18
-                .div(lpState.base.fromInt())
-                .mul(lpState.supply.fromInt())
-                .toInt();
+            toMint = amountBase.div(lpState.base).mul(lpState.supply);
         }
 
-        state.openInterestX18 += amountBaseX18;
+        state.openInterest += amountBase;
 
-        lpState.base += amountBaseX18.toInt();
-        lpState.quote += amountQuoteX18.toInt();
-        lpBalance.amountX18 += toMint.fromInt();
-        _updateBalance(state, balance, -amountBaseX18, -amountQuoteX18);
+        lpState.base += amountBase;
+        lpState.quote += amountQuote;
+        lpBalance.amount += toMint;
+        _updateBalance(state, balance, -amountBase, -amountQuote);
         lpState.supply += toMint;
 
         lpBalances[productId][subaccountId] = lpBalance;
@@ -62,10 +56,10 @@ abstract contract PerpEngineLp is PerpEngineState {
     function burnLp(
         uint32 productId,
         uint64 subaccountId,
-        int256 amountLpX18
+        int128 amountLp
     ) public {
         checkCanApplyDeltas();
-        require(amountLpX18 > 0, ERR_INVALID_LP_AMOUNT);
+        require(amountLp > 0, ERR_INVALID_LP_AMOUNT);
 
         (
             LpState memory lpState,
@@ -74,31 +68,24 @@ abstract contract PerpEngineLp is PerpEngineState {
             Balance memory balance
         ) = getStatesAndBalances(productId, subaccountId);
 
-        if (amountLpX18 == type(int256).max) {
-            amountLpX18 = lpBalance.amountX18;
+        if (amountLp == type(int128).max) {
+            amountLp = lpBalance.amount;
         }
-        if (amountLpX18 == 0) {
+        if (amountLp == 0) {
             return;
         }
 
-        require(lpBalance.amountX18 >= amountLpX18, ERR_INSUFFICIENT_LP);
-        lpBalance.amountX18 -= amountLpX18;
+        require(lpBalance.amount >= amountLp, ERR_INSUFFICIENT_LP);
+        lpBalance.amount -= amountLp;
 
-        int256 amountLp = amountLpX18.toInt();
-
-        int256 amountBase = MathHelper.mul(amountLp, lpState.base) /
+        int128 amountBase = MathHelper.mul(amountLp, lpState.base) /
             lpState.supply;
-        int256 amountQuote = MathHelper.mul(amountLp, lpState.quote) /
+        int128 amountQuote = MathHelper.mul(amountLp, lpState.quote) /
             lpState.supply;
 
-        state.openInterestX18 -= amountBase.fromInt();
+        state.openInterest -= amountBase;
 
-        _updateBalance(
-            state,
-            balance,
-            amountBase.fromInt(),
-            amountQuote.fromInt()
-        );
+        _updateBalance(state, balance, amountBase, amountQuote);
         lpState.base -= amountBase;
         lpState.quote -= amountQuote;
         lpState.supply -= amountLp;
@@ -111,18 +98,22 @@ abstract contract PerpEngineLp is PerpEngineState {
 
     function swapLp(
         uint32 productId,
-        uint64 subaccountId,
+        uint64, /* subaccountId */
         // maximum to swap
-        int256 amount,
-        int256 priceX18,
-        int256 sizeIncrement,
-        int256 lpSpreadX18
-    ) external returns (int256 baseSwappedX18, int256 quoteSwappedX18) {
+        int128 amount,
+        int128 priceX18,
+        int128 sizeIncrement,
+        int128 lpSpreadX18
+    ) external returns (int128 baseSwapped, int128 quoteSwapped) {
         checkCanApplyDeltas();
         LpState memory lpState = lpStates[productId];
+        if (lpState.base == 0 || lpState.quote == 0) {
+            return (0, 0);
+        }
+
         State memory state = states[productId];
 
-        (baseSwappedX18, quoteSwappedX18) = MathHelper.swap(
+        (baseSwapped, quoteSwapped) = MathHelper.swap(
             amount,
             lpState.base,
             lpState.quote,
@@ -131,18 +122,18 @@ abstract contract PerpEngineLp is PerpEngineState {
             lpSpreadX18
         );
 
-        state.openInterestX18 += baseSwappedX18;
+        state.openInterest += baseSwapped;
 
-        lpState.base += baseSwappedX18.toInt();
-        lpState.quote += quoteSwappedX18.toInt();
+        lpState.base += baseSwapped;
+        lpState.quote += quoteSwapped;
         states[productId] = state;
         lpStates[productId] = lpState;
     }
 
     function decomposeLps(uint64 liquidateeId, uint64) external {
-        for (uint256 i = 0; i < productIds.length; ++i) {
+        for (uint128 i = 0; i < productIds.length; ++i) {
             uint32 productId = productIds[i];
-            burnLp(productId, liquidateeId, type(int256).max);
+            burnLp(productId, liquidateeId, type(int128).max);
         }
         // TODO: transfer some of the burned proceeds to liquidator
     }
