@@ -26,11 +26,11 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
 
         if (balance.amountX18 > 0) {
             state.totalDepositsNormalizedX18 -= balance.amountX18.div(
-                state.cumulativeDepositsMultiplierX18
+                balance.lastCumulativeMultiplierX18
             );
         } else {
             state.totalBorrowsNormalizedX18 += balance.amountX18.div(
-                state.cumulativeBorrowsMultiplierX18
+                balance.lastCumulativeMultiplierX18
             );
         }
 
@@ -130,30 +130,39 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             );
         }
 
-        state.cumulativeBorrowsMultiplierX18 = state
-            .cumulativeBorrowsMultiplierX18
-            .mul(borrowRateMultiplierX18);
+        // if we don't take fees into account, the liquidity, which is
+        // (deposits - borrows) should remain the same after updating state.
 
+        // For simplicity, we use `tb`, `cbm`, `td`, and `cdm` for
+        // `totalBorrowsNormalized`, `cumulativeBorrowsMultiplier`,
+        // `totalDepositsNormalized`, and `cumulativeDepositsMultiplier`
+
+        // before the updating, the liquidity is (td * cdm - tb * cbm)
+        // after the updating, the liquidity is
+        // (td * cdm * depositRateMultiplier - tb * cbm * borrowRateMultiplier)
+        // so we can get
+        // depositRateMultiplier = utilization * (borrowRateMultiplier - 1) + 1
         int256 totalDepositRateX18 = utilizationRatioX18.mul(
             borrowRateMultiplierX18 - ONE
         );
+
         // deduct protocol fees
         int256 realizedDepositRateX18 = totalDepositRateX18.mul(
             ONE - _fees.getInterestFeeFractionX18(productId)
         );
 
-        // removed for stack reasons, put it directly below
-        // int256 depositRateMultiplierX18 = ONE +
-        //     realizedDepositRateX18;
-
-        state.cumulativeDepositsMultiplierX18 = state
-            .cumulativeDepositsMultiplierX18
-            .mul(ONE + realizedDepositRateX18);
-
         // pass fees balance change
         int256 feesAmtX18 = totalDepositsX18.mul(
             totalDepositRateX18 - realizedDepositRateX18
         );
+
+        state.cumulativeBorrowsMultiplierX18 = state
+            .cumulativeBorrowsMultiplierX18
+            .mul(borrowRateMultiplierX18);
+
+        state.cumulativeDepositsMultiplierX18 = state
+            .cumulativeDepositsMultiplierX18
+            .mul(ONE + realizedDepositRateX18);
 
         if (feesAmtX18 != 0) {
             Balance memory feesAccBalance = balances[productId][
@@ -194,22 +203,21 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
     }
 
     function updateStates(uint256 dt) external {
-        State memory quoteState;
+        State memory quoteState = states[QUOTE_PRODUCT_ID];
+        _updateState(QUOTE_PRODUCT_ID, quoteState, dt);
 
         for (uint32 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
-            State memory state = states[productId];
-            _updateState(productId, quoteState, dt);
-
-            if (productId != QUOTE_PRODUCT_ID) {
-                LpState memory lpState = lpStates[productId];
-                _updateBalance(state, lpState.base, 0);
-                _updateBalance(quoteState, lpState.quote, 0);
-                lpStates[productId] = lpState;
-                states[productId] = state;
-            } else {
-                quoteState = state;
+            if (productId == QUOTE_PRODUCT_ID) {
+                continue;
             }
+            State memory state = states[productId];
+            LpState memory lpState = lpStates[productId];
+            _updateState(productId, state, dt);
+            _updateBalance(state, lpState.base, 0);
+            _updateBalance(quoteState, lpState.quote, 0);
+            lpStates[productId] = lpState;
+            states[productId] = state;
         }
         states[QUOTE_PRODUCT_ID] = quoteState;
     }

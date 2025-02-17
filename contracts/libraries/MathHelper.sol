@@ -22,6 +22,7 @@ library MathHelper {
 
     // babylonian method (https://en.wikipedia.org/wiki/Methods_of_computing_square_roots#Babylonian_method)
     function sqrt(int256 y) internal pure returns (int256 z) {
+        require(y >= 0, "ds-math-sqrt-non-positive");
         if (y > 3) {
             z = y;
             int256 x = y / 2 + 1;
@@ -67,12 +68,21 @@ library MathHelper {
         return string(buffer);
     }
 
-    function add(int256 x, int256 y) internal pure returns (int256 z) {
-        require((z = x + y) >= x, "ds-math-add-overflow");
+    // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v3.1.0/contracts/math/SignedSafeMath.sol#L86
+    function add(int256 x, int256 y) internal pure returns (int256) {
+        int256 z = x + y;
+        require((y >= 0 && z >= x) || (y < 0 && z < x), "ds-math-add-overflow");
+        return z;
     }
 
-    function sub(int256 x, int256 y) internal pure returns (int256 z) {
-        require((z = x - y) <= x, "ds-math-sub-underflow");
+    // https://github.com/OpenZeppelin/openzeppelin-contracts/blob/v3.1.0/contracts/math/SignedSafeMath.sol#L69
+    function sub(int256 x, int256 y) internal pure returns (int256) {
+        int256 z = x - y;
+        require(
+            (y >= 0 && z <= x) || (y < 0 && z > x),
+            "ds-math-sub-underflow"
+        );
+        return z;
     }
 
     function mul(int256 x, int256 y) internal pure returns (int256 z) {
