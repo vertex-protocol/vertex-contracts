@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./interfaces/IVesting.sol";
+import "./interfaces/ISanctionsList.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
@@ -15,19 +16,30 @@ contract Vesting is IVesting, OwnableUpgradeable {
     }
 
     address token;
+    address sanctions;
     uint64 totalVestingSchedules;
     mapping(uint64 => VestingSchedule) vestingSchedules;
-    mapping(uint64 => uint256) vestedAmounts;
+    mapping(uint64 => uint256) claimedAmounts;
     mapping(address => uint64[]) vestingScheduleIds;
 
-    function initialize(address _token) external initializer {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address _token,
+        address _sanctions
+    ) external initializer {
         __Ownable_init();
         token = _token;
+        sanctions = _sanctions;
     }
 
     function _pruneExpiredVestingSchedules(address account) internal {
         uint64 currentTime = uint64(block.timestamp);
-        for (uint32 i = 0; i < vestingScheduleIds[account].length; i++) {
+        uint32 i = 0;
+        while (i < vestingScheduleIds[account].length) {
             if (
                 vestingSchedules[vestingScheduleIds[account][i]].endTime <=
                 currentTime
@@ -36,6 +48,8 @@ contract Vesting is IVesting, OwnableUpgradeable {
                     vestingScheduleIds[account].length - 1
                 ];
                 vestingScheduleIds[account].pop();
+            } else {
+                i += 1;
             }
         }
     }
@@ -64,7 +78,7 @@ contract Vesting is IVesting, OwnableUpgradeable {
 
     function getVestable(
         uint64 vestingScheduleId
-    ) external view returns (uint256 vestable) {
+    ) public view returns (uint256 vestable) {
         uint64 currentTime = uint64(block.timestamp);
         VestingSchedule memory vestingSchedule = vestingSchedules[
             vestingScheduleId
@@ -80,10 +94,8 @@ contract Vesting is IVesting, OwnableUpgradeable {
         }
     }
 
-    function getVested(
-        uint64 vestingScheduleId
-    ) external view returns (uint256) {
-        return vestedAmounts[vestingScheduleId];
+    function getVested(uint64 vestingScheduleId) public view returns (uint256) {
+        return claimedAmounts[vestingScheduleId];
     }
 
     function getClaimable(
@@ -92,24 +104,29 @@ contract Vesting is IVesting, OwnableUpgradeable {
         for (uint32 i = 0; i < vestingScheduleIds[account].length; i++) {
             uint64 vestingScheduleId = vestingScheduleIds[account][i];
             claimable +=
-                this.getVestable(vestingScheduleId) -
-                this.getVested(vestingScheduleId);
+                getVestable(vestingScheduleId) -
+                getVested(vestingScheduleId);
         }
     }
 
     function claim() external {
+        address sender = msg.sender;
+        require(
+            !ISanctionsList(sanctions).isSanctioned(sender),
+            "address is sanctioned."
+        );
         uint256 totalClaimable = 0;
-        for (uint32 i = 0; i < vestingScheduleIds[msg.sender].length; i++) {
-            uint64 vestingScheduleId = vestingScheduleIds[msg.sender][i];
-            uint256 claimable = this.getVestable(vestingScheduleId) -
-                this.getVested(vestingScheduleId);
-            vestedAmounts[vestingScheduleId] += claimable;
+        for (uint32 i = 0; i < vestingScheduleIds[sender].length; i++) {
+            uint64 vestingScheduleId = vestingScheduleIds[sender][i];
+            uint256 claimable = getVestable(vestingScheduleId) -
+                getVested(vestingScheduleId);
+            claimedAmounts[vestingScheduleId] += claimable;
             totalClaimable += claimable;
         }
         if (totalClaimable != 0) {
-            SafeERC20.safeTransfer(IERC20(token), msg.sender, totalClaimable);
+            SafeERC20.safeTransfer(IERC20(token), sender, totalClaimable);
         }
-        _pruneExpiredVestingSchedules(msg.sender);
+        _pruneExpiredVestingSchedules(sender);
     }
 
     function getVestingSchedule(

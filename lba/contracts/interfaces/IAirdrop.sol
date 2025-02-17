@@ -2,6 +2,8 @@
 pragma solidity ^0.8.0;
 
 interface IAirdrop {
+    event ClaimVrtx(address indexed account, uint32 epoch, uint256 amount);
+
     function claimToLBA(
         uint256 amount,
         uint256 totalAmount,

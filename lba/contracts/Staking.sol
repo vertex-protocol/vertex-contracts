@@ -2,22 +2,24 @@
 pragma solidity ^0.8.0;
 
 import "./interfaces/IStaking.sol";
+import "./interfaces/ISanctionsList.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 contract Staking is IStaking, OwnableUpgradeable {
     uint32 constant BOOST_LENGTH = 3600 * 24 * 183; // 183 days
-    uint64 constant WITHDRAW_LOCKING_TIME = 3600 * 24 * 14; // 14 days
-    uint256 constant BASE_SCORE_MULTIPLIER = 25;
-    uint256 constant BOOST_SCORE_MULTIPLIER = 100;
+    uint256 constant BASE_SCORE_MULTIPLIER = 2;
+    uint256 constant BOOST_SCORE_MULTIPLIER = 3;
     uint32 constant INF = type(uint32).max;
 
     address vrtxToken;
     address usdcToken;
+    address sanctions;
     State globalState;
     QueueIndex segIndex;
     uint64 numCheckpoints;
+    uint64 withdrawLockingTime;
 
     mapping(uint64 => Segment) toApplySegments;
     // whenever `account` withdraws VRTX, its version gets increased by one.
@@ -32,13 +34,22 @@ contract Staking is IStaking, OwnableUpgradeable {
     mapping(uint64 => Checkpoint) checkpoints;
     mapping(address => LastActionTimes) lastActionTimes;
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         address _vrtxToken,
-        address _usdcToken
+        address _usdcToken,
+        address _sanctions,
+        uint32 _withdrawLockingTime
     ) external initializer {
         __Ownable_init();
         vrtxToken = _vrtxToken;
         usdcToken = _usdcToken;
+        sanctions = _sanctions;
+        withdrawLockingTime = _withdrawLockingTime;
     }
 
     function _updateStates(Segment memory segment) internal {
@@ -89,7 +100,7 @@ contract Staking is IStaking, OwnableUpgradeable {
     }
 
     function _processAllCheckpoints(address account) internal {
-        uint256[] memory rewardsBreakdown = this.getRewardsBreakdown(account);
+        uint256[] memory rewardsBreakdown = getRewardsBreakdown(account);
         for (uint64 i = checkpointIndexes[account]; i < numCheckpoints; i++) {
             rewardsBreakdowns[account][i] = rewardsBreakdown[i];
         }
@@ -105,8 +116,13 @@ contract Staking is IStaking, OwnableUpgradeable {
     }
 
     function stake(uint256 amount) external {
-        _processAllSegments();
+        require(amount > 0, "Trying to stake 0 tokens.");
         address sender = msg.sender;
+        require(
+            !ISanctionsList(sanctions).isSanctioned(sender),
+            "address is sanctioned."
+        );
+        _processAllSegments();
         _processAllCheckpoints(sender);
         SafeERC20.safeTransferFrom(
             IERC20(vrtxToken),
@@ -137,8 +153,13 @@ contract Staking is IStaking, OwnableUpgradeable {
     }
 
     function withdraw(uint256 amount) external {
-        _processAllSegments();
+        require(amount > 0, "Trying to withdraw 0 staked tokens");
         address sender = msg.sender;
+        require(
+            !ISanctionsList(sanctions).isSanctioned(sender),
+            "address is sanctioned."
+        );
+        _processAllSegments();
         _processAllCheckpoints(sender);
         require(
             amount <= states[sender].vrtxStaked,
@@ -177,15 +198,19 @@ contract Staking is IStaking, OwnableUpgradeable {
         releaseSchedules[sender][
             releaseScheduleIndexes[sender].count++
         ] = ReleaseSchedule({
-            releaseTime: currentTime + WITHDRAW_LOCKING_TIME,
+            releaseTime: currentTime + withdrawLockingTime,
             amount: amount
         });
         lastActionTimes[sender].lastWithdrawTime = currentTime;
     }
 
     function claimVrtx() external {
-        _processAllSegments();
         address sender = msg.sender;
+        require(
+            !ISanctionsList(sanctions).isSanctioned(sender),
+            "address is sanctioned."
+        );
+        _processAllSegments();
         _processAllCheckpoints(sender);
         QueueIndex memory index = releaseScheduleIndexes[sender];
         uint64 currentTime = uint64(block.timestamp);
@@ -202,24 +227,29 @@ contract Staking is IStaking, OwnableUpgradeable {
             }
         }
         releaseScheduleIndexes[sender] = index;
-        if (vrtxClaimable > 0) {
-            SafeERC20.safeTransfer(IERC20(vrtxToken), sender, vrtxClaimable);
-        }
+        require(vrtxClaimable > 0, "No VRTX to claim.");
+        SafeERC20.safeTransfer(IERC20(vrtxToken), sender, vrtxClaimable);
     }
 
     function claimUsdc() external {
-        _processAllSegments();
         address sender = msg.sender;
+        require(
+            !ISanctionsList(sanctions).isSanctioned(sender),
+            "address is sanctioned."
+        );
+        _processAllSegments();
         _processAllCheckpoints(sender);
         uint256 unclaimedRewards = 0;
         for (uint64 i = toClaimCheckpoint[sender]; i < numCheckpoints; i++) {
             unclaimedRewards += rewardsBreakdowns[sender][i];
         }
         toClaimCheckpoint[sender] = numCheckpoints;
+        require(unclaimedRewards > 0, "No USDC to claim.");
         SafeERC20.safeTransfer(IERC20(usdcToken), sender, unclaimedRewards);
     }
 
     function distributeRewards(uint256 amount) external onlyOwner {
+        require(amount > 0, "must distribute non-zero rewards.");
         _processAllSegments();
         uint64 currentTime = uint64(block.timestamp);
         address sender = msg.sender;
@@ -259,7 +289,7 @@ contract Staking is IStaking, OwnableUpgradeable {
     function getUsdcClaimable(
         address account
     ) external view returns (uint256 usdcClaimable) {
-        uint256[] memory rewardsBreakdown = this.getRewardsBreakdown(account);
+        uint256[] memory rewardsBreakdown = getRewardsBreakdown(account);
         for (uint64 i = toClaimCheckpoint[account]; i < numCheckpoints; i++) {
             usdcClaimable += rewardsBreakdown[i];
         }
@@ -267,7 +297,7 @@ contract Staking is IStaking, OwnableUpgradeable {
 
     function getRewardsBreakdown(
         address account
-    ) external view returns (uint256[] memory) {
+    ) public view returns (uint256[] memory) {
         uint256[] memory rewardsBreakdown = new uint256[](numCheckpoints);
         for (uint64 i = 0; i < numCheckpoints; i++) {
             if (i < checkpointIndexes[account]) {
@@ -294,6 +324,22 @@ contract Staking is IStaking, OwnableUpgradeable {
         return rewardsBreakdown;
     }
 
+    function getGlobalRewardsBreakdown()
+        external
+        view
+        returns (GlobalRewardsBreakdown[] memory)
+    {
+        GlobalRewardsBreakdown[]
+            memory globalRewardsBreakdown = new GlobalRewardsBreakdown[](
+                numCheckpoints
+            );
+        for (uint64 i = 0; i < numCheckpoints; i++) {
+            globalRewardsBreakdown[i].distributionTime = checkpoints[i].time;
+            globalRewardsBreakdown[i].rewardsAmount = checkpoints[i].rewards;
+        }
+        return globalRewardsBreakdown;
+    }
+
     function getVrtxStaked(address account) external view returns (uint256) {
         return states[account].vrtxStaked;
     }
@@ -315,17 +361,25 @@ contract Staking is IStaking, OwnableUpgradeable {
 
     function getScore(address account) external view returns (uint256) {
         uint64 currentTime = uint64(block.timestamp);
-        return _getScoreAtTime(states[account], currentTime);
+        return _getScoreAtTime(states[account], currentTime) / 2;
     }
 
     function getTotalScore() external view returns (uint256) {
         uint64 currentTime = uint64(block.timestamp);
-        return _getScoreAtTime(globalState, currentTime);
+        return _getScoreAtTime(globalState, currentTime) / 2;
     }
 
     function getLastActionTimes(
         address account
     ) external view returns (LastActionTimes memory) {
         return lastActionTimes[account];
+    }
+
+    function getWithdrawLockingTime() external view returns (uint64) {
+        return withdrawLockingTime;
+    }
+
+    function updateConfig(uint64 _withdrawLockingTime) external onlyOwner {
+        withdrawLockingTime = _withdrawLockingTime;
     }
 }

@@ -63,6 +63,8 @@ interface ILBA {
 
     function getState() external view returns (State memory);
 
+    function getClaimedRewards(address account) external view returns (uint256);
+
     function getClaimableRewards(
         address account
     ) external view returns (uint256);

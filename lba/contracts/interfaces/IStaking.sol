@@ -43,6 +43,11 @@ interface IStaking {
         uint256 vrtxPendingUnlock;
     }
 
+    struct GlobalRewardsBreakdown {
+        uint64 distributionTime;
+        uint256 rewardsAmount;
+    }
+
     function stake(uint256 amount) external;
 
     function withdraw(uint256 amount) external;
@@ -59,6 +64,11 @@ interface IStaking {
         address account
     ) external view returns (uint256[] memory);
 
+    function getGlobalRewardsBreakdown()
+        external
+        view
+        returns (GlobalRewardsBreakdown[] memory);
+
     function getUsdcClaimable(address account) external view returns (uint256);
 
     function getVrtxStaked(address account) external view returns (uint256);
@@ -72,4 +82,6 @@ interface IStaking {
     function getLastActionTimes(
         address account
     ) external view returns (LastActionTimes memory);
+
+    function getWithdrawLockingTime() external view returns (uint64);
 }
