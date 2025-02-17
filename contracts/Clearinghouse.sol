@@ -16,10 +16,12 @@ import "./interfaces/engine/IPerpEngine.sol";
 import "./EndpointGated.sol";
 import "./interfaces/IEndpoint.sol";
 import "./ClearinghouseStorage.sol";
-import "./Version.sol";
+import "./WithdrawPool.sol";
 
 interface IProxyManager {
     function getProxyManagerHelper() external view returns (address);
+
+    function getCodeHash(string memory name) external view returns (bytes32);
 }
 
 enum YieldMode {
@@ -45,12 +47,7 @@ interface IBlast {
     ) external;
 }
 
-contract Clearinghouse is
-    EndpointGated,
-    ClearinghouseStorage,
-    IClearinghouse,
-    Version
-{
+contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     using MathSD21x18 for int128;
     using ERC20Helper for IERC20Base;
 
@@ -58,7 +55,8 @@ contract Clearinghouse is
         address _endpoint,
         address _quote,
         address _clearinghouseLiq,
-        uint256 _spreads
+        uint256 _spreads,
+        address _withdrawPool
     ) external initializer {
         __Ownable_init();
         setEndpoint(_endpoint);
@@ -66,6 +64,7 @@ contract Clearinghouse is
         clearinghouse = address(this);
         clearinghouseLiq = _clearinghouseLiq;
         spreads = _spreads;
+        withdrawPool = _withdrawPool;
         emit ClearinghouseInitialized(_endpoint, _quote);
     }
 
@@ -268,12 +267,15 @@ contract Clearinghouse is
         require(_isAboveInitial(txn.sender), ERR_SUBACCT_HEALTH);
     }
 
-    /// @notice control insurance balance, only callable by owner
-    function depositInsurance(IEndpoint.DepositInsurance calldata txn)
+    function depositInsurance(bytes calldata transaction)
         external
         virtual
         onlyEndpoint
     {
+        IEndpoint.DepositInsurance memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.DepositInsurance)
+        );
         require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         int256 multiplier = int256(
             10**(MAX_DECIMALS - _decimals(QUOTE_PRODUCT_ID))
@@ -285,9 +287,11 @@ contract Clearinghouse is
     function handleWithdrawTransfer(
         IERC20Base token,
         address to,
-        uint128 amount
+        uint128 amount,
+        uint64 idx
     ) internal virtual {
-        token.safeTransfer(to, uint256(amount));
+        token.safeTransfer(withdrawPool, uint256(amount));
+        WithdrawPool(withdrawPool).submitWithdrawal(token, to, amount, idx);
     }
 
     function _balanceOf(address token) internal view virtual returns (uint128) {
@@ -298,7 +302,8 @@ contract Clearinghouse is
         bytes32 sender,
         uint32 productId,
         uint128 amount,
-        address sendTo
+        address sendTo,
+        uint64 idx
     ) external virtual onlyEndpoint {
         require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
@@ -311,7 +316,7 @@ contract Clearinghouse is
             sendTo = address(uint160(bytes20(sender)));
         }
 
-        handleWithdrawTransfer(token, sendTo, amount);
+        handleWithdrawTransfer(token, sendTo, amount, idx);
 
         int256 multiplier = int256(10**(MAX_DECIMALS - _decimals(productId)));
         int128 amountRealized = -int128(amount) * int128(multiplier);
@@ -323,7 +328,6 @@ contract Clearinghouse is
             : IProductEngine.HealthType.INITIAL;
 
         require(getHealth(sender, healthType) >= 0, ERR_SUBACCT_HEALTH);
-
         emit ModifyCollateral(amountRealized, sender, productId);
     }
 
@@ -443,7 +447,11 @@ contract Clearinghouse is
             .updateBalance(QUOTE_PRODUCT_ID, subaccount, amountSettled);
     }
 
-    function settlePnl(IEndpoint.SettlePnl calldata txn) external onlyEndpoint {
+    function settlePnl(bytes calldata transaction) external onlyEndpoint {
+        IEndpoint.SettlePnl memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.SettlePnl)
+        );
         for (uint128 i = 0; i < txn.subaccounts.length; ++i) {
             _settlePnl(txn.subaccounts[i], txn.productIds[i]);
         }
@@ -487,14 +495,18 @@ contract Clearinghouse is
         address value;
     }
 
-    function upgradeClearinghouseLiq(address _clearinghouseLiq) external {
+    function _getProxyManager() internal view returns (address) {
         AddressSlot storage proxyAdmin;
         assembly {
             proxyAdmin.slot := 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103
         }
+        return proxyAdmin.value;
+    }
+
+    function upgradeClearinghouseLiq(address _clearinghouseLiq) external {
         require(
             msg.sender ==
-                IProxyManager(proxyAdmin.value).getProxyManagerHelper(),
+                IProxyManager(_getProxyManager()).getProxyManagerHelper(),
             ERR_UNAUTHORIZED
         );
         clearinghouseLiq = _clearinghouseLiq;
@@ -515,5 +527,63 @@ contract Clearinghouse is
     ) external onlyOwner {
         IBlastPoints(blastPoints).configurePointsOperator(gov);
         IBlast(blast).configure(YieldMode.CLAIMABLE, GasMode.CLAIMABLE, gov);
+    }
+
+    function requireMinDeposit(uint32 productId, uint128 amount) external {
+        require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
+        uint8 decimals = _decimals(productId);
+        require(decimals <= MAX_DECIMALS);
+
+        int256 multiplier = int256(10**(MAX_DECIMALS - decimals));
+        int128 amountRealized = int128(multiplier) * int128(amount);
+        int128 priceX18 = ONE;
+        if (productId != QUOTE_PRODUCT_ID) {
+            priceX18 = IEndpoint(getEndpoint()).getPriceX18(productId);
+        }
+
+        require(
+            priceX18.mul(amountRealized) >= MIN_DEPOSIT_AMOUNT,
+            ERR_DEPOSIT_TOO_SMALL
+        );
+    }
+
+    function assertCode(bytes calldata transaction) external view virtual {
+        IEndpoint.AssertCode memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.AssertCode)
+        );
+        require(
+            txn.contractNames.length == txn.codeHashes.length,
+            ERR_CODE_NOT_MATCH
+        );
+        for (uint256 i = 0; i < txn.contractNames.length; i++) {
+            bytes32 expectedCodeHash = IProxyManager(_getProxyManager())
+                .getCodeHash(txn.contractNames[i]);
+            require(txn.codeHashes[i] == expectedCodeHash, ERR_CODE_NOT_MATCH);
+        }
+    }
+
+    function manualAssert(bytes calldata transaction) external view virtual {
+        IEndpoint.ManualAssert memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.ManualAssert)
+        );
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        IPerpEngine perpEngine = IPerpEngine(
+            address(engineByType[IProductEngine.EngineType.PERP])
+        );
+        perpEngine.manualAssert(txn.openInterests);
+        spotEngine.manualAssert(txn.totalDeposits, txn.totalBorrows);
+    }
+
+    function getWithdrawPool() external view returns (address) {
+        return withdrawPool;
+    }
+
+    function setWithdrawPool(address _withdrawPool) external onlyOwner {
+        require(_withdrawPool != address(0));
+        withdrawPool = _withdrawPool;
     }
 }

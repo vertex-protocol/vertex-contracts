@@ -16,7 +16,9 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
 
     mapping(uint32 => int128) internal withdrawFees;
 
-    uint64 public migrationFlag;
+    uint64 public migrationFlag; // deprecated
+
+    mapping(uint32 => int128) internal minDepositRatesX18;
 
     function _updateBalanceWithoutDelta(
         State memory state,
@@ -151,7 +153,6 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
     function _updateState(
         uint32 productId,
         State memory state,
-        int128 utilizationRatioX18,
         uint128 dt
     ) internal {
         int128 borrowRateMultiplierX18;
@@ -161,7 +162,7 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         int128 totalBorrows = state.totalBorrowsNormalized.mul(
             state.cumulativeBorrowsMultiplierX18
         );
-        utilizationRatioX18 = totalBorrows.div(totalDeposits);
+        int128 utilizationRatioX18 = totalBorrows.div(totalDeposits);
         {
             Config memory config = configs[productId];
 
@@ -239,6 +240,22 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             _updateBalanceNormalized(state, feesAccBalance, feesAmt);
             balances[productId][FEES_ACCOUNT].balance = feesAccBalance;
             _balanceUpdate(productId, FEES_ACCOUNT);
+        }
+
+        // apply the min deposit rate
+        if (minDepositRatesX18[productId] != 0) {
+            int128 minDepositRatePerSecondX18 = minDepositRatesX18[productId]
+                .div(MathSD21x18.fromInt(31536000));
+            int128 minDepositRateMultiplierX18 = (ONE +
+                minDepositRatePerSecondX18).pow(int128(dt));
+
+            state.cumulativeBorrowsMultiplierX18 = state
+                .cumulativeBorrowsMultiplierX18
+                .mul(minDepositRateMultiplierX18);
+
+            state.cumulativeDepositsMultiplierX18 = state
+                .cumulativeDepositsMultiplierX18
+                .mul(minDepositRateMultiplierX18);
         }
     }
 
@@ -371,33 +388,10 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         );
     }
 
-    function _tryMigrateStates() internal {
-        if (migrationFlag != 0) return;
-        migrationFlag = 1;
-        uint32[] memory _productIds = getProductIds();
-        for (uint128 i = 0; i < _productIds.length; i++) {
-            uint32 productId = _productIds[i];
-            BalanceNormalized memory balance = balances[productId][X_ACCOUNT]
-                .balance;
-            State memory state = states[productId];
-            if (balance.amountNormalized >= 0) {
-                state.totalDepositsNormalized += balance.amountNormalized;
-            } else {
-                state.totalBorrowsNormalized -= balance.amountNormalized;
-            }
-            states[productId] = state;
-            _productUpdate(productId);
-        }
-    }
-
-    function updateStates(uint128 dt, int128[] calldata globalUtilRatiosX18)
-        external
-        onlyEndpoint
-    {
-        _tryMigrateStates();
+    function updateStates(uint128 dt) external onlyEndpoint {
         State memory quoteState;
         require(dt < 7 * SECONDS_PER_DAY, ERR_INVALID_TIME);
-        for (uint32 i = 0; i < globalUtilRatiosX18.length; i++) {
+        for (uint32 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
             State memory state = states[productId];
             if (productId == QUOTE_PRODUCT_ID) {
@@ -407,13 +401,26 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
                 continue;
             }
             LpState memory lpState = lpStates[productId];
-            _updateState(productId, state, globalUtilRatiosX18[i], dt);
+            _updateState(productId, state, dt);
             _updateBalanceWithoutDelta(state, lpState.base);
             _updateBalanceWithoutDelta(quoteState, lpState.quote);
             lpStates[productId] = lpState;
             states[productId] = state;
             _productUpdate(productId);
         }
+    }
+
+    function updateMinDepositRate(uint32 productId, int128 minDepositRateX18)
+        external
+        onlyEndpoint
+    {
+        // deposit rate can't be larger than 100% so that when the rate is incorrectly
+        // set, we still can rescue it without having too much damage.
+        require(
+            minDepositRateX18 >= 0 && minDepositRateX18 <= ONE,
+            ERR_BAD_PRODUCT_CONFIG
+        );
+        minDepositRatesX18[productId] = minDepositRateX18;
     }
 
     function getProductIds(uint32 isoGroup)
@@ -430,5 +437,13 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
             productIds[1] = isoGroup;
             return productIds;
         }
+    }
+
+    function getMinDepositRate(uint32 productId)
+        external
+        view
+        returns (int128)
+    {
+        return minDepositRatesX18[productId];
     }
 }

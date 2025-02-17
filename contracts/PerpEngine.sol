@@ -12,9 +12,8 @@ import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
 import "./BaseEngine.sol";
 import "./PerpEngineLp.sol";
-import "./Version.sol";
 
-contract PerpEngine is PerpEngineLp, Version {
+contract PerpEngine is PerpEngineLp {
     using MathSD21x18 for int128;
 
     function initialize(
@@ -46,11 +45,12 @@ contract PerpEngine is PerpEngineLp, Version {
     ) public onlyOwner {
         _addProductForId(
             productId,
-            riskStore,
+            QUOTE_PRODUCT_ID,
             book,
             sizeIncrement,
             minSize,
-            lpSpreadX18
+            lpSpreadX18,
+            riskStore
         );
 
         states[productId] = State({
@@ -91,6 +91,7 @@ contract PerpEngine is PerpEngineLp, Version {
 
         _exchange().updateMarket(
             txn.productId,
+            type(uint32).max,
             address(0),
             txn.sizeIncrement,
             txn.minSize,

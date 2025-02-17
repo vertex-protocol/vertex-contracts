@@ -16,13 +16,12 @@ import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 import "./interfaces/IERC20Base.sol";
 import "./interfaces/IVerifier.sol";
-import "./Version.sol";
 
 interface ISanctionsList {
     function isSanctioned(address addr) external view returns (bool);
 }
 
-contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
+contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     using ERC20Helper for IERC20Base;
 
     IERC20Base private quote; // deprecated
@@ -53,9 +52,9 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint128 spotTime;
     }
 
-    Times private times;
+    Times internal times;
 
-    mapping(uint32 => int128) private sequencerFee;
+    mapping(uint32 => int128) internal sequencerFee;
 
     mapping(bytes32 => address) internal linkedSigners;
 
@@ -290,6 +289,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             sender == msg.sender ? referralCode : DEFAULT_REFERRAL_CODE
         );
 
+        if (subaccount != X_ACCOUNT && (subaccountIds[subaccount] == 0)) {
+            clearinghouse.requireMinDeposit(productId, amount);
+        }
+
         IERC20Base token = IERC20Base(spotEngine.getToken(productId));
         require(address(token) != address(0));
         handleDepositTransfer(token, msg.sender, uint256(amount));
@@ -390,16 +393,17 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint256 gasRemaining = gasleft();
         try this.processSlowModeTransaction(txn.sender, txn.tx) {} catch {
             // we need to differentiate between a revert and an out of gas
-            // the expectation is that because 63/64 * gasRemaining is forwarded
-            // we should be able to differentiate based on whether
-            // gasleft() >= gasRemaining / 64. however, experimentally
-            // even more gas can be remaining, and i don't have a clear
-            // understanding as to why. as a result we just err on the
-            // conservative side and provide two conservative
-            // asserts that should cover all cases at the expense of needing
-            // to provide a higher gas limit than necessary
+            // the issue is that in evm every inner call only 63/64 of the
+            // remaining gas in the outer frame is forwarded. as a result
+            // the amount of gas left for execution is (63/64)**len(stack)
+            // and you can get an out of gas while spending an arbitrarily
+            // low amount of gas in the final frame. we use a heuristic
+            // here that isn't perfect but covers our cases.
+            // having gasleft() <= gasRemaining / 2 buys us 44 nested calls
+            // before we miss out of gas errors; 1/2 ~= (63/64)**44
+            // this is good enough for our purposes
 
-            if (gasleft() <= 100000 || gasleft() <= gasRemaining / 16) {
+            if (gasleft() <= 250000 || gasleft() <= gasRemaining / 2) {
                 assembly {
                     invalid()
                 }
@@ -450,20 +454,22 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 txn.sender,
                 txn.productId,
                 txn.amount,
-                address(0)
+                address(0),
+                nSubmissions
             );
         } else if (txType == TransactionType.SettlePnl) {
-            SettlePnl memory txn = abi.decode(transaction[1:], (SettlePnl));
-            clearinghouse.settlePnl(txn);
+            clearinghouse.settlePnl(transaction);
         } else if (txType == TransactionType.DepositInsurance) {
-            DepositInsurance memory txn = abi.decode(
-                transaction[1:],
-                (DepositInsurance)
-            );
-            clearinghouse.depositInsurance(txn);
+            clearinghouse.depositInsurance(transaction);
         } else if (txType == TransactionType.MintLp) {
             MintLp memory txn = abi.decode(transaction[1:], (MintLp));
-            require(txn.productId % 2 == 1);
+            require(
+                clearinghouse.getEngineByProduct(txn.productId) ==
+                    clearinghouse.getEngineByType(
+                        IProductEngine.EngineType.SPOT
+                    ),
+                ERR_INVALID_PRODUCT
+            );
             validateSender(txn.sender, sender);
             clearinghouse.mintLp(txn);
         } else if (txType == TransactionType.BurnLp) {
@@ -484,6 +490,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         } else if (txType == TransactionType.LinkSigner) {
             LinkSigner memory txn = abi.decode(transaction[1:], (LinkSigner));
             validateSender(txn.sender, sender);
+            requireSubaccount(txn.sender);
             linkedSigners[txn.sender] = address(uint160(bytes20(txn.signer)));
         } else if (txType == TransactionType.BurnLpAndTransfer) {
             BurnLpAndTransfer memory txn = abi.decode(
@@ -550,13 +557,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 signedTx.tx.sender,
                 signedTx.tx.productId,
                 signedTx.tx.amount,
-                address(0)
+                address(0),
+                nSubmissions
             );
         } else if (txType == TransactionType.SpotTick) {
             SpotTick memory txn = abi.decode(transaction[1:], (SpotTick));
             Times memory t = times;
             uint128 dt = t.spotTime == 0 ? 0 : txn.time - t.spotTime;
-            spotEngine.updateStates(dt, txn.utilizationRatiosX18);
+            spotEngine.updateStates(dt);
             t.spotTime = txn.time;
             times = t;
         } else if (txType == TransactionType.PerpTick) {
@@ -570,8 +578,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
             UpdatePrice memory txn = abi.decode(transaction[1:], (UpdatePrice));
             _updatePrice(txn.productId, txn.priceX18);
         } else if (txType == TransactionType.SettlePnl) {
-            SettlePnl memory txn = abi.decode(transaction[1:], (SettlePnl));
-            clearinghouse.settlePnl(txn);
+            clearinghouse.settlePnl(transaction);
         } else if (
             txType == TransactionType.MatchOrders ||
             txType == TransactionType.MatchOrdersRFQ
@@ -654,14 +661,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 fees[i] = sequencerFee[spotIds[i]];
                 sequencerFee[spotIds[i]] = 0;
             }
+            requireSubaccount(txn.subaccount);
             clearinghouse.claimSequencerFees(txn, fees);
         } else if (txType == TransactionType.ManualAssert) {
-            ManualAssert memory txn = abi.decode(
-                transaction[1:],
-                (ManualAssert)
-            );
-            perpEngine.manualAssert(txn.openInterests);
-            spotEngine.manualAssert(txn.totalDeposits, txn.totalBorrows);
+            clearinghouse.manualAssert(transaction);
         } else if (txType == TransactionType.LinkSigner) {
             SignedLinkSigner memory signedTx = abi.decode(
                 transaction[1:],
@@ -711,7 +714,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 )
             );
 
-            requireSubaccount(signedTx.tx.recipient);
+            _recordSubaccount(signedTx.tx.recipient);
             validateSignature(signedTx.tx.sender, digest, signedTx.signature);
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
@@ -726,8 +729,21 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
                 X_ACCOUNT,
                 txn.productId,
                 txn.amount,
-                txn.sendTo
+                txn.sendTo,
+                nSubmissions
             );
+        } else if (txType == TransactionType.UpdateMinDepositRate) {
+            UpdateMinDepositRate memory txn = abi.decode(
+                transaction[1:],
+                (UpdateMinDepositRate)
+            );
+
+            spotEngine.updateMinDepositRate(
+                txn.productId,
+                txn.minDepositRateX18
+            );
+        } else if (txType == TransactionType.AssertCode) {
+            clearinghouse.assertCode(transaction);
         } else {
             revert();
         }
@@ -737,7 +753,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         uint64 idx,
         bytes[] calldata transactions,
         bytes32 e,
-        bytes32 s
+        bytes32 s,
+        uint8 signerBitmask
     ) external {
         require(idx == nSubmissions, ERR_INVALID_SUBMISSION_INDEX);
         require(msg.sender == sequencer);
@@ -748,13 +765,13 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         for (uint256 i = 0; i < transactions.length; ++i) {
             digest = keccak256(abi.encodePacked(digest, transactions[i]));
         }
-        verifier.requireValidSignature(digest, e, s, 7);
+        verifier.requireValidSignature(digest, e, s, signerBitmask);
 
         for (uint256 i = 0; i < transactions.length; i++) {
             bytes calldata transaction = transactions[i];
             processTransaction(transaction);
+            nSubmissions += 1;
         }
-        nSubmissions += uint64(transactions.length);
     }
 
     function submitTransactionsCheckedWithGasLimit(
@@ -807,10 +824,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         return offchainExchange;
     }
 
-    function setSequencer(address _sequencer) external onlyOwner {
-        sequencer = _sequencer;
-    }
-
     function getSequencer() external view returns (address) {
         return sequencer;
     }
@@ -835,10 +848,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable, Version {
         return nonces[sender];
     }
 
-    function registerTransferableWallet(address wallet, bool _transferable)
-        external
-        onlyOwner
-    {
-        transferableWallets[wallet] = true;
+    function updateSanctions(address _sanctions) external onlyOwner {
+        sanctions = ISanctionsList(_sanctions);
     }
 }

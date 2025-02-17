@@ -2,9 +2,8 @@
 pragma solidity ^0.8.0;
 
 import "./clearinghouse/IClearinghouse.sol";
-import "./IVersion.sol";
 
-interface IOffchainExchange is IVersion {
+interface IOffchainExchange {
     event FillOrder(
         uint32 indexed productId,
         // original order information
@@ -41,6 +40,7 @@ interface IOffchainExchange is IVersion {
     }
 
     struct MarketInfo {
+        uint32 quoteId;
         int128 minSize;
         int128 sizeIncrement;
         int128 collectedFees;
@@ -57,6 +57,7 @@ interface IOffchainExchange is IVersion {
 
     function updateMarket(
         uint32 productId,
+        uint32 quoteId,
         address virtualBook,
         int128 sizeIncrement,
         int128 minSize,

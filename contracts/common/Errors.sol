@@ -126,3 +126,7 @@ string constant ERR_MAX_UTILIZATION = "MU";
 string constant ERR_INVALID_RISK_GROUP = "IRG";
 
 string constant ERR_VERIFY_SCHNORR = "VSR";
+
+string constant ERR_DEPOSIT_TOO_SMALL = "DTS";
+
+string constant ERR_CODE_NOT_MATCH = "CNM";

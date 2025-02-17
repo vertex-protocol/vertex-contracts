@@ -18,13 +18,11 @@ import "./interfaces/engine/IPerpEngine.sol";
 import "./EndpointGated.sol";
 import "./interfaces/IEndpoint.sol";
 import "./ClearinghouseStorage.sol";
-import "./Version.sol";
 
 contract ClearinghouseLiq is
     EndpointGated,
     ClearinghouseStorage,
-    IClearinghouseLiq,
-    Version
+    IClearinghouseLiq
 {
     using MathSD21x18 for int128;
 
@@ -185,10 +183,14 @@ contract ClearinghouseLiq is
                     (, ISpotEngine.Balance memory quoteBalance) = spotEngine
                         .getStateAndBalance(QUOTE_PRODUCT_ID, txn.liquidatee);
                     // this is the cross account
+                    int128 maximumLiquidatable = (quoteBalance.amount +
+                        insurance).div(liquidationPrice);
+                    maximumLiquidatable = MathHelper.max(
+                        maximumLiquidatable + 1,
+                        0
+                    );
                     basisAmount = MathHelper.max(
-                        -((quoteBalance.amount + insurance).div(
-                            liquidationPrice
-                        ) + 1),
+                        -maximumLiquidatable,
                         basisAmount
                     );
                 }
@@ -393,19 +395,36 @@ contract ClearinghouseLiq is
         // all spot assets (except USDC) must be closed out
         for (uint32 i = 1; i < v.spotIds.length; ++i) {
             uint32 spotId = v.spotIds[i];
-            (, ISpotEngine.Balance memory balance) = spotEngine
-                .getStateAndBalance(spotId, txn.liquidatee);
             if (spotEngine.getRisk(spotId).longWeightInitialX18 == 0) {
                 continue;
             }
-            require(balance.amount <= 0, ERR_NOT_FINALIZABLE_SUBACCOUNT);
+            (
+                ,
+                ISpotEngine.LpBalance memory lpBalance,
+                ,
+                ISpotEngine.Balance memory balance
+            ) = spotEngine.getStatesAndBalances(spotId, txn.liquidatee);
+
+            require(
+                lpBalance.amount == 0 && balance.amount <= 0,
+                ERR_NOT_FINALIZABLE_SUBACCOUNT
+            );
         }
 
         for (uint32 i = 0; i < v.perpIds.length; ++i) {
             uint32 perpId = v.perpIds[i];
-            (, IPerpEngine.Balance memory balance) = perpEngine
-                .getStateAndBalance(perpId, txn.liquidatee);
-            require(balance.amount == 0, ERR_NOT_FINALIZABLE_SUBACCOUNT);
+            (
+                ,
+                IPerpEngine.LpBalance memory lpBalance,
+                ,
+                IPerpEngine.Balance memory balance
+            ) = perpEngine.getStatesAndBalances(perpId, txn.liquidatee);
+
+            require(
+                lpBalance.amount == 0 && balance.amount == 0,
+                ERR_NOT_FINALIZABLE_SUBACCOUNT
+            );
+
             if (balance.vQuoteBalance > 0) {
                 _settlePnlAgainstLiquidator(
                     txn,

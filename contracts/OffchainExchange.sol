@@ -12,15 +12,13 @@ import "./libraries/Logger.sol";
 import "./interfaces/IOffchainExchange.sol";
 import "./EndpointGated.sol";
 import "./common/Errors.sol";
-import "./Version.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 
 contract OffchainExchange is
     IOffchainExchange,
     EndpointGated,
-    EIP712Upgradeable,
-    Version
+    EIP712Upgradeable
 {
     using MathSD21x18 for int128;
     IClearinghouse internal clearinghouse;
@@ -38,6 +36,8 @@ contract OffchainExchange is
 
     mapping(address => bool) internal addressTouched;
     address[] internal customFeeAddresses;
+
+    mapping(uint32 => uint32) internal quoteIds;
 
     function getAllFeeRates(address[] memory users, uint32[] memory productIds)
         external
@@ -90,6 +90,7 @@ contract OffchainExchange is
         returns (MarketInfo memory m)
     {
         MarketInfoStore memory market = marketInfo[productId];
+        m.quoteId = quoteIds[productId];
         m.collectedFees = market.collectedFees;
         m.minSize = int128(market.minSize) * 1e9;
         m.sizeIncrement = int128(market.sizeIncrement) * 1e9;
@@ -133,6 +134,7 @@ contract OffchainExchange is
 
     function _updateBalances(
         CallState memory callState,
+        uint32 quoteId,
         bytes32 subaccount,
         int128 baseDelta,
         int128 quoteDelta
@@ -145,12 +147,21 @@ contract OffchainExchange is
                 quoteDelta
             );
         } else {
-            callState.spot.updateBalance(
-                callState.productId,
-                subaccount,
-                baseDelta,
-                quoteDelta
-            );
+            if (quoteId == QUOTE_PRODUCT_ID) {
+                callState.spot.updateBalance(
+                    callState.productId,
+                    subaccount,
+                    baseDelta,
+                    quoteDelta
+                );
+            } else {
+                callState.spot.updateBalance(
+                    callState.productId,
+                    subaccount,
+                    baseDelta
+                );
+                callState.spot.updateBalance(quoteId, subaccount, quoteDelta);
+            }
         }
     }
 
@@ -171,24 +182,33 @@ contract OffchainExchange is
         );
     }
 
-    function updateMarket(
-        uint32 productId,
-        address virtualBook,
-        int128 sizeIncrement,
-        int128 minSize,
-        int128 lpSpreadX18
-    ) external virtual {
+    function requireEngine() internal virtual {
         require(
             msg.sender == address(spotEngine) ||
                 msg.sender == address(perpEngine),
             "only engine can modify config"
         );
+    }
+
+    function updateMarket(
+        uint32 productId,
+        uint32 quoteId,
+        address virtualBook,
+        int128 sizeIncrement,
+        int128 minSize,
+        int128 lpSpreadX18
+    ) external {
+        requireEngine();
         if (virtualBook != address(0)) {
             require(
                 virtualBookContract[productId] == address(0),
                 "virtual book already set"
             );
             virtualBookContract[productId] = virtualBook;
+        }
+
+        if (quoteId != type(uint32).max) {
+            quoteIds[productId] = quoteId;
         }
 
         marketInfo[productId].minSize = int64(minSize / 1e9);
@@ -279,7 +299,7 @@ contract OffchainExchange is
         MarketInfo memory,
         IEndpoint.SignedOrder memory signedOrder,
         bytes32 orderDigest,
-        address linkedSigner
+        address /* linkedSigner */
     ) internal view returns (bool) {
         if (signedOrder.order.sender == X_ACCOUNT) {
             return true;
@@ -489,6 +509,7 @@ contract OffchainExchange is
 
         _updateBalances(
             callState,
+            market.quoteId,
             maker.sender,
             -takerAmountDelta,
             makerQuoteDelta
@@ -557,6 +578,7 @@ contract OffchainExchange is
 
         _updateBalances(
             callState,
+            market.quoteId,
             taker.order.sender,
             takerAmountDelta,
             takerQuoteDelta
@@ -670,6 +692,7 @@ contract OffchainExchange is
 
             _updateBalances(
                 callState,
+                market.quoteId,
                 taker.order.sender,
                 takerAmountDelta,
                 takerQuoteDelta
@@ -713,6 +736,8 @@ contract OffchainExchange is
         MarketInfo memory market = getMarketInfo(txn.productId);
         CallState memory callState = _getCallState(txn.productId);
 
+        require(txn.priceX18 > 0, ERR_INVALID_PRICE);
+
         if (callState.isPerp) {
             require(
                 txn.amount % market.sizeIncrement == 0,
@@ -748,6 +773,7 @@ contract OffchainExchange is
 
         _updateBalances(
             callState,
+            market.quoteId,
             txn.sender,
             takerAmountDelta,
             takerQuoteDelta
@@ -777,7 +803,7 @@ contract OffchainExchange is
             }
 
             spotEngine.updateBalance(
-                QUOTE_PRODUCT_ID,
+                quoteIds[productId],
                 FEES_ACCOUNT,
                 market.collectedFees
             );
@@ -847,7 +873,29 @@ contract OffchainExchange is
             addressTouched[user] = true;
             customFeeAddresses.push(user);
         }
-        feeRates[user][productId] = FeeRates(makerRateX18, takerRateX18, 1);
+        if (productId == QUOTE_PRODUCT_ID) {
+            uint32[] memory spotProductIds = spotEngine.getProductIds();
+            uint32[] memory perpProductIds = perpEngine.getProductIds();
+            for (uint32 i = 0; i < spotProductIds.length; i++) {
+                if (spotProductIds[i] == QUOTE_PRODUCT_ID) {
+                    continue;
+                }
+                feeRates[user][spotProductIds[i]] = FeeRates(
+                    makerRateX18,
+                    takerRateX18,
+                    1
+                );
+            }
+            for (uint32 i = 0; i < perpProductIds.length; i++) {
+                feeRates[user][perpProductIds[i]] = FeeRates(
+                    makerRateX18,
+                    takerRateX18,
+                    1
+                );
+            }
+        } else {
+            feeRates[user][productId] = FeeRates(makerRateX18, takerRateX18, 1);
+        }
     }
 
     function getVirtualBook(uint32 productId) external view returns (address) {
@@ -875,22 +923,5 @@ contract OffchainExchange is
             virtualBooks[i] = virtualBookContract[i];
         }
         return virtualBooks;
-    }
-
-    // TODO: remove this function after migration
-    function updateMinSizes(
-        uint32[] memory productIds,
-        int128[] memory minSizes
-    ) external onlyOwner {
-        require(productIds.length == minSizes.length, "invalid inputs.");
-        for (uint32 i = 0; i < productIds.length; i++) {
-            uint32 productId = productIds[i];
-            int128 minSize = minSizes[i];
-            require(
-                marketInfo[productId].minSize != 0,
-                "market doesn't exist."
-            );
-            marketInfo[productId].minSize = int64(minSize / 1e9);
-        }
     }
 }

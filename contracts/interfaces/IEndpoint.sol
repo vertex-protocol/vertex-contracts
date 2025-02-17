@@ -2,9 +2,8 @@
 pragma solidity ^0.8.0;
 
 import "./clearinghouse/IClearinghouse.sol";
-import "./IVersion.sol";
 
-interface IEndpoint is IVersion {
+interface IEndpoint {
     event SubmitTransactions();
 
     // events that we parse transactions into
@@ -22,7 +21,7 @@ interface IEndpoint is IVersion {
         BurnLp,
         SwapAMM,
         MatchOrderAMM,
-        DumpFees, // deprecated
+        DumpFees,
         ClaimSequencerFees,
         PerpTick,
         ManualAssert,
@@ -30,10 +29,12 @@ interface IEndpoint is IVersion {
         UpdateProduct,
         LinkSigner,
         UpdateFeeRates,
-        BurnLpAndTransfer, // deprecated
+        BurnLpAndTransfer,
         MatchOrdersRFQ,
         TransferQuote,
-        RebalanceXWithdraw
+        RebalanceXWithdraw,
+        UpdateMinDepositRate,
+        AssertCode
     }
 
     struct UpdateProduct {
@@ -158,6 +159,11 @@ interface IEndpoint is IVersion {
         int128[] totalBorrows;
     }
 
+    struct AssertCode {
+        string[] contractNames;
+        bytes32[] codeHashes;
+    }
+
     struct Rebate {
         bytes32[] subaccounts;
         int128[] amounts;
@@ -181,6 +187,11 @@ interface IEndpoint is IVersion {
         uint32 productId;
         uint128 amount;
         address sendTo;
+    }
+
+    struct UpdateMinDepositRate {
+        uint32 productId;
+        int128 minDepositRateX18;
     }
 
     struct UpdatePrice {
