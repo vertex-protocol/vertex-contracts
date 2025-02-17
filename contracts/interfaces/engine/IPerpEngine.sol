@@ -5,13 +5,6 @@ import "./IProductEngine.sol";
 import "../../libraries/RiskHelper.sol";
 
 interface IPerpEngine is IProductEngine {
-    event FundingPayment(
-        uint32 productId,
-        uint128 dt,
-        int128 openInterest,
-        int128 payment
-    );
-
     struct State {
         int128 cumulativeFundingLongX18;
         int128 cumulativeFundingShortX18;

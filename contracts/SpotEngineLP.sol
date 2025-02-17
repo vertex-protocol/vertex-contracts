@@ -20,13 +20,9 @@ abstract contract SpotEngineLP is SpotEngineState {
             ERR_INVALID_LP_AMOUNT
         );
 
-        require(
-            _exchange().getMarketInfo(productId).quoteId == QUOTE_PRODUCT_ID,
-            ERR_INVALID_PRODUCT
-        );
-
         LpState memory lpState = lpStates[productId];
         State memory base = states[productId];
+        //        State memory quote = _getQuoteState(RiskHelper.isoGroup(subaccount));
         State memory quote = states[QUOTE_PRODUCT_ID];
 
         int128 amountQuote = (lpState.base.amount == 0)
@@ -62,6 +58,7 @@ abstract contract SpotEngineLP is SpotEngineState {
         balances[productId][subaccount].balance = baseBalance;
         balances[QUOTE_PRODUCT_ID][subaccount].balance = quoteBalance;
         states[productId] = base;
+        //        quoteStates[RiskHelper.isoGroup(subaccount)] = quote;
         states[QUOTE_PRODUCT_ID] = quote;
 
         _balanceUpdate(productId, subaccount);
@@ -79,6 +76,7 @@ abstract contract SpotEngineLP is SpotEngineState {
         LpState memory lpState = lpStates[productId];
         LpBalance memory lpBalance = balances[productId][subaccount].lpBalance;
         State memory base = states[productId];
+        //        State memory quote = _getQuoteState(RiskHelper.isoGroup(subaccount));
         State memory quote = states[QUOTE_PRODUCT_ID];
 
         if (amountLp == type(int128).max) {
@@ -117,6 +115,7 @@ abstract contract SpotEngineLP is SpotEngineState {
         balances[productId][subaccount].balance = baseBalance;
         balances[QUOTE_PRODUCT_ID][subaccount].balance = quoteBalance;
         states[productId] = base;
+        //        quoteStates[RiskHelper.isoGroup(subaccount)] = quote;
         states[QUOTE_PRODUCT_ID] = quote;
 
         _balanceUpdate(productId, subaccount);
@@ -159,11 +158,12 @@ abstract contract SpotEngineLP is SpotEngineState {
         return (baseDelta, quoteDelta);
     }
 
-    function decomposeLps(bytes32 liquidatee, bytes32 liquidator)
-        external
-        returns (int128 liquidationFees)
-    {
-        uint32[] memory _productIds = getProductIds();
+    function decomposeLps(
+        uint32 isoGroup,
+        bytes32 liquidatee,
+        bytes32 liquidator
+    ) external returns (int128 liquidationFees) {
+        uint32[] memory _productIds = getProductIds(isoGroup);
         for (uint128 i = 0; i < _productIds.length; ++i) {
             uint32 productId = _productIds[i];
             (, int128 amountQuote) = burnLp(

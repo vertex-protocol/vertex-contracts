@@ -11,7 +11,7 @@ import "hardhat/console.sol";
 abstract contract EndpointGated is OwnableUpgradeable, IEndpointGated {
     address private endpoint;
 
-    function setEndpoint(address _endpoint) internal onlyOwner {
+    function setEndpoint(address _endpoint) public onlyOwner {
         endpoint = _endpoint;
     }
 

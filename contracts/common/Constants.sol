@@ -20,10 +20,10 @@ int128 constant TAKER_SEQUENCER_FEE = 0; // $0.00
 
 int128 constant SLOW_MODE_FEE = 1000000; // $1
 
-int128 constant FAST_WITHDRAWAL_FEE_RATE = 1_000_000_000_000_000; // 0.1%
-
 int128 constant LIQUIDATION_FEE = 1e18; // $1
 int128 constant HEALTHCHECK_FEE = 1e18; // $1
+
+uint64 constant VERSION = 27;
 
 uint128 constant INT128_MAX = uint128(type(int128).max);
 
@@ -33,8 +33,4 @@ uint32 constant VRTX_PRODUCT_ID = 41;
 
 int128 constant LIQUIDATION_FEE_FRACTION = 500_000_000_000_000_000; // 50%
 
-int128 constant INTEREST_FEE_FRACTION = 200_000_000_000_000_000; // 20%
-
-int256 constant MIN_DEPOSIT_AMOUNT = 5 * ONE;
-
-uint32 constant MAX_ISOLATED_SUBACCOUNTS_PER_ADDRESS = 10;
+int128 constant INTEREST_FEE_FRACTION = 200_000_000_000_000_000; // 50%

@@ -12,8 +12,9 @@ import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
 import "./BaseEngine.sol";
 import "./PerpEngineLp.sol";
+import "./Version.sol";
 
-contract PerpEngine is PerpEngineLp {
+contract PerpEngine is PerpEngineLp, Version {
     using MathSD21x18 for int128;
 
     function initialize(
@@ -45,12 +46,11 @@ contract PerpEngine is PerpEngineLp {
     ) public onlyOwner {
         _addProductForId(
             productId,
-            QUOTE_PRODUCT_ID,
+            riskStore,
             book,
             sizeIncrement,
             minSize,
-            lpSpreadX18,
-            riskStore
+            lpSpreadX18
         );
 
         states[productId] = State({
@@ -91,7 +91,6 @@ contract PerpEngine is PerpEngineLp {
 
         _exchange().updateMarket(
             txn.productId,
-            type(uint32).max,
             address(0),
             txn.sizeIncrement,
             txn.minSize,
@@ -222,7 +221,8 @@ contract PerpEngine is PerpEngineLp {
     {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
-        uint32[] memory _productIds = getProductIds();
+        uint32 isoGroup = RiskHelper.isoGroup(subaccount);
+        uint32[] memory _productIds = getProductIds(isoGroup);
         for (uint128 i = 0; i < _productIds.length; ++i) {
             uint32 productId = _productIds[i];
             (State memory state, Balance memory balance) = getStateAndBalance(

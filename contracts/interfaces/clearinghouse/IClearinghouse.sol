@@ -5,9 +5,14 @@ import "./IClearinghouseEventEmitter.sol";
 import "../engine/IProductEngine.sol";
 import "../IEndpoint.sol";
 import "../IEndpointGated.sol";
+import "../IVersion.sol";
 import "../../libraries/RiskHelper.sol";
 
-interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
+interface IClearinghouse is
+    IClearinghouseEventEmitter,
+    IEndpointGated,
+    IVersion
+{
     function addEngine(
         address engine,
         address offchainExchange,
@@ -25,8 +30,7 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
         bytes32 sender,
         uint32 productId,
         uint128 amount,
-        address sendTo,
-        uint64 idx
+        address sendTo
     ) external;
 
     function mintLp(IEndpoint.MintLp calldata tx) external;
@@ -36,13 +40,9 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
     function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata tx)
         external;
 
-    function depositInsurance(bytes calldata transaction) external;
+    function depositInsurance(IEndpoint.DepositInsurance calldata tx) external;
 
-    function withdrawInsurance(bytes calldata transaction, uint64 idx) external;
-
-    function delistProduct(bytes calldata transaction) external;
-
-    function settlePnl(bytes calldata transaction) external;
+    function settlePnl(IEndpoint.SettlePnl calldata tx) external;
 
     function claimSequencerFees(
         IEndpoint.ClaimSequencerFees calldata tx,
@@ -81,18 +81,4 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
 
     function burnLpAndTransfer(IEndpoint.BurnLpAndTransfer calldata txn)
         external;
-
-    function requireMinDeposit(uint32 productId, uint128 amount) external;
-
-    function assertCode(bytes calldata tx) external;
-
-    function manualAssert(bytes calldata tx) external;
-
-    function getWithdrawPool() external view returns (address);
-
-    function getSlowModeFee() external view returns (uint256);
-
-    function getWithdrawFee(uint32 productId) external view returns (int128);
-
-    function setWithdrawPool(address _withdrawPool) external;
 }

@@ -16,12 +16,10 @@ import "./interfaces/engine/IPerpEngine.sol";
 import "./EndpointGated.sol";
 import "./interfaces/IEndpoint.sol";
 import "./ClearinghouseStorage.sol";
-import "./WithdrawPool.sol";
+import "./Version.sol";
 
 interface IProxyManager {
     function getProxyManagerHelper() external view returns (address);
-
-    function getCodeHash(string memory name) external view returns (bytes32);
 }
 
 enum YieldMode {
@@ -47,7 +45,12 @@ interface IBlast {
     ) external;
 }
 
-contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
+contract Clearinghouse is
+    EndpointGated,
+    ClearinghouseStorage,
+    IClearinghouse,
+    Version
+{
     using MathSD21x18 for int128;
     using ERC20Helper for IERC20Base;
 
@@ -55,8 +58,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         address _endpoint,
         address _quote,
         address _clearinghouseLiq,
-        uint256 _spreads,
-        address _withdrawPool
+        uint256 _spreads
     ) external initializer {
         __Ownable_init();
         setEndpoint(_endpoint);
@@ -64,7 +66,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         clearinghouse = address(this);
         clearinghouseLiq = _clearinghouseLiq;
         spreads = _spreads;
-        withdrawPool = _withdrawPool;
         emit ClearinghouseInitialized(_endpoint, _quote);
     }
 
@@ -230,7 +231,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         virtual
         onlyEndpoint
     {
-        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
@@ -262,41 +262,18 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             bytes20(txn.sender) == bytes20(txn.recipient),
             ERR_UNAUTHORIZED
         );
-        address offchainExchange = IEndpoint(getEndpoint())
-            .getOffchainExchange();
-        if (RiskHelper.isIsolatedSubaccount(txn.sender)) {
-            // isolated subaccounts can only transfer quote back to parent
-            require(
-                IOffchainExchange(offchainExchange).getParentSubaccount(
-                    txn.sender
-                ) == txn.recipient,
-                ERR_UNAUTHORIZED
-            );
-        } else if (RiskHelper.isIsolatedSubaccount(txn.recipient)) {
-            // regular subaccounts can transfer quote to active isolated subaccounts
-            require(
-                IOffchainExchange(offchainExchange).isIsolatedSubaccountActive(
-                    txn.sender,
-                    txn.recipient
-                ),
-                ERR_UNAUTHORIZED
-            );
-        }
 
         spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, -toTransfer);
         spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.recipient, toTransfer);
         require(_isAboveInitial(txn.sender), ERR_SUBACCT_HEALTH);
     }
 
-    function depositInsurance(bytes calldata transaction)
+    /// @notice control insurance balance, only callable by owner
+    function depositInsurance(IEndpoint.DepositInsurance calldata txn)
         external
         virtual
         onlyEndpoint
     {
-        IEndpoint.DepositInsurance memory txn = abi.decode(
-            transaction[1:],
-            (IEndpoint.DepositInsurance)
-        );
         require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         int256 multiplier = int256(
             10**(MAX_DECIMALS - _decimals(QUOTE_PRODUCT_ID))
@@ -305,78 +282,12 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         insurance += amount;
     }
 
-    function withdrawInsurance(bytes calldata transaction, uint64 idx)
-        external
-        virtual
-        onlyEndpoint
-    {
-        IEndpoint.WithdrawInsurance memory txn = abi.decode(
-            transaction[1:],
-            (IEndpoint.WithdrawInsurance)
-        );
-        require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
-        int256 multiplier = int256(
-            10**(MAX_DECIMALS - _decimals(QUOTE_PRODUCT_ID))
-        );
-        int128 amount = int128(txn.amount) * int128(multiplier);
-        require(amount <= insurance, ERR_NO_INSURANCE);
-        insurance -= amount;
-
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IERC20Base token = IERC20Base(
-            spotEngine.getConfig(QUOTE_PRODUCT_ID).token
-        );
-        require(address(token) != address(0));
-        handleWithdrawTransfer(token, txn.sendTo, txn.amount, idx);
-    }
-
-    function delistProduct(bytes calldata transaction) external onlyEndpoint {
-        IEndpoint.DelistProduct memory txn = abi.decode(
-            transaction[1:],
-            (IEndpoint.DelistProduct)
-        );
-        // only perp can be delisted
-        require(
-            productToEngine[txn.productId] ==
-                engineByType[IProductEngine.EngineType.PERP],
-            ERR_INVALID_PRODUCT
-        );
-        require(
-            txn.priceX18 == IEndpoint(getEndpoint()).getPriceX18(txn.productId),
-            ERR_INVALID_PRICE
-        );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
-        int128 sumBase = 0;
-        for (uint256 i = 0; i < txn.subaccounts.length; i++) {
-            IPerpEngine.Balance memory balance = perpEngine.getBalance(
-                txn.productId,
-                txn.subaccounts[i]
-            );
-            int128 baseDelta = -balance.amount;
-            int128 quoteDelta = -baseDelta.mul(txn.priceX18);
-            sumBase += baseDelta;
-            perpEngine.updateBalance(
-                txn.productId,
-                txn.subaccounts[i],
-                baseDelta,
-                quoteDelta
-            );
-        }
-        require(sumBase == 0, ERR_INVALID_HOLDER_LIST);
-    }
-
     function handleWithdrawTransfer(
         IERC20Base token,
         address to,
-        uint128 amount,
-        uint64 idx
+        uint128 amount
     ) internal virtual {
-        token.safeTransfer(withdrawPool, uint256(amount));
-        WithdrawPool(withdrawPool).submitWithdrawal(token, to, amount, idx);
+        token.safeTransfer(to, uint256(amount));
     }
 
     function _balanceOf(address token) internal view virtual returns (uint128) {
@@ -387,10 +298,8 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         bytes32 sender,
         uint32 productId,
         uint128 amount,
-        address sendTo,
-        uint64 idx
+        address sendTo
     ) external virtual onlyEndpoint {
-        require(!RiskHelper.isIsolatedSubaccount(sender), ERR_UNAUTHORIZED);
         require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
@@ -402,7 +311,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             sendTo = address(uint160(bytes20(sender)));
         }
 
-        handleWithdrawTransfer(token, sendTo, amount, idx);
+        handleWithdrawTransfer(token, sendTo, amount);
 
         int256 multiplier = int256(10**(MAX_DECIMALS - _decimals(productId)));
         int128 amountRealized = -int128(amount) * int128(multiplier);
@@ -414,14 +323,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             : IProductEngine.HealthType.INITIAL;
 
         require(getHealth(sender, healthType) >= 0, ERR_SUBACCT_HEALTH);
-        // TODO: remove this when we support wS spot.
-        if (productId == 145) {
-            ISpotEngine.Balance memory balance = spotEngine.getBalance(
-                productId,
-                sender
-            );
-            require(balance.amount >= 0, ERR_SUBACCT_HEALTH);
-        }
+
         emit ModifyCollateral(amountRealized, sender, productId);
     }
 
@@ -430,10 +332,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         virtual
         onlyEndpoint
     {
-        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         require(txn.productId != QUOTE_PRODUCT_ID);
-        // TODO: remove this when we support wS spot.
-        require(txn.productId != 145, ERR_INVALID_PRODUCT);
         productToEngine[txn.productId].mintLp(
             txn.productId,
             txn.sender,
@@ -449,7 +348,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         virtual
         onlyEndpoint
     {
-        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         productToEngine[txn.productId].burnLp(
             txn.productId,
             txn.sender,
@@ -462,11 +360,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         virtual
         onlyEndpoint
     {
-        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
-        require(
-            !RiskHelper.isIsolatedSubaccount(txn.recipient),
-            ERR_UNAUTHORIZED
-        );
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
@@ -487,10 +380,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         IEndpoint.ClaimSequencerFees calldata txn,
         int128[] calldata fees
     ) external virtual onlyEndpoint {
-        require(
-            !RiskHelper.isIsolatedSubaccount(txn.subaccount),
-            ERR_UNAUTHORIZED
-        );
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
@@ -554,11 +443,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             .updateBalance(QUOTE_PRODUCT_ID, subaccount, amountSettled);
     }
 
-    function settlePnl(bytes calldata transaction) external onlyEndpoint {
-        IEndpoint.SettlePnl memory txn = abi.decode(
-            transaction[1:],
-            (IEndpoint.SettlePnl)
-        );
+    function settlePnl(IEndpoint.SettlePnl calldata txn) external onlyEndpoint {
         for (uint128 i = 0; i < txn.subaccounts.length; ++i) {
             _settlePnl(txn.subaccounts[i], txn.productIds[i]);
         }
@@ -602,18 +487,14 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         address value;
     }
 
-    function _getProxyManager() internal view returns (address) {
+    function upgradeClearinghouseLiq(address _clearinghouseLiq) external {
         AddressSlot storage proxyAdmin;
         assembly {
             proxyAdmin.slot := 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103
         }
-        return proxyAdmin.value;
-    }
-
-    function upgradeClearinghouseLiq(address _clearinghouseLiq) external {
         require(
             msg.sender ==
-                IProxyManager(_getProxyManager()).getProxyManagerHelper(),
+                IProxyManager(proxyAdmin.value).getProxyManagerHelper(),
             ERR_UNAUTHORIZED
         );
         clearinghouseLiq = _clearinghouseLiq;
@@ -634,111 +515,5 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     ) external onlyOwner {
         IBlastPoints(blastPoints).configurePointsOperator(gov);
         IBlast(blast).configure(YieldMode.CLAIMABLE, GasMode.CLAIMABLE, gov);
-    }
-
-    function requireMinDeposit(uint32 productId, uint128 amount) external {
-        require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
-        uint8 decimals = _decimals(productId);
-        require(decimals <= MAX_DECIMALS);
-
-        int256 multiplier = int256(10**(MAX_DECIMALS - decimals));
-        int128 amountRealized = int128(multiplier) * int128(amount);
-        int128 priceX18 = ONE;
-        if (productId != QUOTE_PRODUCT_ID) {
-            priceX18 = IEndpoint(getEndpoint()).getPriceX18(productId);
-        }
-
-        require(
-            priceX18.mul(amountRealized) >= MIN_DEPOSIT_AMOUNT,
-            ERR_DEPOSIT_TOO_SMALL
-        );
-    }
-
-    function assertCode(bytes calldata transaction) external view virtual {
-        IEndpoint.AssertCode memory txn = abi.decode(
-            transaction[1:],
-            (IEndpoint.AssertCode)
-        );
-        require(
-            txn.contractNames.length == txn.codeHashes.length,
-            ERR_CODE_NOT_MATCH
-        );
-        for (uint256 i = 0; i < txn.contractNames.length; i++) {
-            bytes32 expectedCodeHash = IProxyManager(_getProxyManager())
-                .getCodeHash(txn.contractNames[i]);
-            require(txn.codeHashes[i] == expectedCodeHash, ERR_CODE_NOT_MATCH);
-        }
-    }
-
-    function manualAssert(bytes calldata transaction) external view virtual {
-        IEndpoint.ManualAssert memory txn = abi.decode(
-            transaction[1:],
-            (IEndpoint.ManualAssert)
-        );
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IPerpEngine perpEngine = IPerpEngine(
-            address(engineByType[IProductEngine.EngineType.PERP])
-        );
-        perpEngine.manualAssert(txn.openInterests);
-        spotEngine.manualAssert(txn.totalDeposits, txn.totalBorrows);
-    }
-
-    function getWithdrawPool() external view returns (address) {
-        return withdrawPool;
-    }
-
-    function setWithdrawPool(address _withdrawPool) external onlyOwner {
-        require(_withdrawPool != address(0));
-        withdrawPool = _withdrawPool;
-    }
-
-    function getSlowModeFee() external view returns (uint256) {
-        ISpotEngine spotEngine = ISpotEngine(
-            address(engineByType[IProductEngine.EngineType.SPOT])
-        );
-        IERC20Base token = IERC20Base(
-            spotEngine.getConfig(QUOTE_PRODUCT_ID).token
-        );
-        int256 multiplier = int256(10**(token.decimals() - 6));
-        return uint256(int256(SLOW_MODE_FEE) * multiplier);
-    }
-
-    function getWithdrawFee(uint32 productId) external pure returns (int128) {
-        // TODO: use the map the store withdraw fees
-        // return withdrawFees[productId];
-        if (
-            productId == QUOTE_PRODUCT_ID ||
-            productId == 5 ||
-            productId == 31 ||
-            productId == 41 ||
-            productId == 109 ||
-            productId == 113 ||
-            productId == 115 ||
-            productId == 119 ||
-            productId == 121 ||
-            productId == 123 ||
-            productId == 125 ||
-            productId == 127 ||
-            productId == 145
-        ) {
-            // USDC, ARB, USDT, VRTX, MNT, BLAST (blast), WSEI, BENJI (base), TRUMP (arbi), TRUMP (base), HARRIS (arbi), HARRIS (base), wS
-            return 1e18;
-        } else if (productId == 1) {
-            // BTC
-            return 4e13;
-        } else if (
-            productId == 3 ||
-            productId == 91 ||
-            productId == 93 ||
-            productId == 111 ||
-            productId == 117 ||
-            productId == 149
-        ) {
-            // ETH (arbi), ETH (blast), ETH (mantle), METH, ETH (base), wstETH
-            return 6e14;
-        }
-        return 0;
     }
 }

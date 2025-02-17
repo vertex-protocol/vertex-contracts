@@ -11,8 +11,9 @@ import "./libraries/RiskHelper.sol";
 import "./BaseEngine.sol";
 import "./SpotEngineState.sol";
 import "./SpotEngineLP.sol";
+import "./Version.sol";
 
-contract SpotEngine is SpotEngineLP {
+contract SpotEngine is SpotEngineLP, Version {
     using MathSD21x18 for int128;
 
     function initialize(
@@ -45,6 +46,7 @@ contract SpotEngine is SpotEngineLP {
             totalBorrowsNormalized: 0
         });
         productIds.push(QUOTE_PRODUCT_ID);
+        _crossMask().value |= 1; // 1 << 0
         emit AddProduct(QUOTE_PRODUCT_ID);
     }
 
@@ -60,6 +62,30 @@ contract SpotEngine is SpotEngineLP {
         return configs[productId];
     }
 
+    function getWithdrawFee(uint32 productId) external pure returns (int128) {
+        // TODO: use the map the store withdraw fees
+        // return withdrawFees[productId];
+        if (productId == QUOTE_PRODUCT_ID) {
+            return 1e18;
+        } else if (productId == 1) {
+            // BTC
+            return 4e13;
+        } else if (productId == 3 || productId == 91) {
+            // ETH
+            return 6e14;
+        } else if (productId == 5) {
+            // ARB
+            return 1e18;
+        } else if (productId == 31) {
+            // USDT
+            return 1e18;
+        } else if (productId == 41) {
+            // VRTX
+            return 1e18;
+        }
+        return 0;
+    }
+
     /**
      * Actions
      */
@@ -67,7 +93,6 @@ contract SpotEngine is SpotEngineLP {
     /// @notice adds a new product with default parameters
     function addProduct(
         uint32 productId,
-        uint32 quoteId,
         address book,
         int128 sizeIncrement,
         int128 minSize,
@@ -78,12 +103,11 @@ contract SpotEngine is SpotEngineLP {
         require(productId != QUOTE_PRODUCT_ID);
         _addProductForId(
             productId,
-            quoteId,
+            riskStore,
             book,
             sizeIncrement,
             minSize,
-            lpSpreadX18,
-            riskStore
+            lpSpreadX18
         );
 
         configs[productId] = config;
@@ -111,7 +135,10 @@ contract SpotEngine is SpotEngineLP {
                     riskStore.longWeightMaintenance &&
                     riskStore.shortWeightInitial >=
                     riskStore.shortWeightMaintenance &&
-                    configs[txn.productId].token == txn.config.token,
+                    // we messed up placeholder's token address so we have to find
+                    // a new way to check whether a product is a placeholder.
+                    (states[txn.productId].totalDepositsNormalized == 0 ||
+                        configs[txn.productId].token == txn.config.token),
                 ERR_BAD_PRODUCT_CONFIG
             );
 
@@ -124,7 +151,6 @@ contract SpotEngine is SpotEngineLP {
 
             _exchange().updateMarket(
                 txn.productId,
-                type(uint32).max,
                 address(0),
                 txn.sizeIncrement,
                 txn.minSize,
@@ -140,6 +166,8 @@ contract SpotEngine is SpotEngineLP {
         returns (int128)
     {
         _assertInternal();
+        //        uint32 isoGroup = RiskHelper.isoGroup(subaccount);
+        //        State memory state = _getQuoteState(isoGroup);
         State memory state = states[QUOTE_PRODUCT_ID];
         BalanceNormalized memory balanceNormalized = balances[QUOTE_PRODUCT_ID][
             subaccount
@@ -156,6 +184,7 @@ contract SpotEngine is SpotEngineLP {
             insurance -= topUpAmount;
             _updateBalanceNormalized(state, balanceNormalized, topUpAmount);
         }
+        //        quoteStates[isoGroup] = state;
         states[QUOTE_PRODUCT_ID] = state;
         balances[QUOTE_PRODUCT_ID][subaccount].balance = balanceNormalized;
         return insurance;
@@ -179,12 +208,26 @@ contract SpotEngine is SpotEngineLP {
             subaccount
         ].balance;
 
-        _updateBalanceNormalized(state, balance, amountDelta);
-        _updateBalanceNormalized(quoteState, quoteBalance, quoteDelta);
+        if (subaccount == X_ACCOUNT && migrationFlag == 0) {
+            _updateBalanceNormalizedNoTotals(state, balance, amountDelta);
+            _updateBalanceNormalizedNoTotals(
+                quoteState,
+                quoteBalance,
+                quoteDelta
+            );
+        } else {
+            _updateBalanceNormalized(state, balance, amountDelta);
+            _updateBalanceNormalized(quoteState, quoteBalance, quoteDelta);
+        }
 
         balances[productId][subaccount].balance = balance;
         balances[QUOTE_PRODUCT_ID][subaccount].balance = quoteBalance;
 
+        //        if (productId == QUOTE_PRODUCT_ID) {
+        //            quoteStates[RiskHelper.isoGroup(subaccount)] = state;
+        //        } else {
+        //            states[productId] = state;
+        //        }
         states[productId] = state;
         states[QUOTE_PRODUCT_ID] = quoteState;
 
@@ -199,13 +242,25 @@ contract SpotEngine is SpotEngineLP {
     ) external {
         _assertInternal();
 
+        //        State memory state = productId == QUOTE_PRODUCT_ID
+        //            ? _getQuoteState(RiskHelper.isoGroup(subaccount))
+        //            : states[productId];
         State memory state = states[productId];
 
         BalanceNormalized memory balance = balances[productId][subaccount]
             .balance;
-        _updateBalanceNormalized(state, balance, amountDelta);
+        if (subaccount == X_ACCOUNT && migrationFlag == 0) {
+            _updateBalanceNormalizedNoTotals(state, balance, amountDelta);
+        } else {
+            _updateBalanceNormalized(state, balance, amountDelta);
+        }
         balances[productId][subaccount].balance = balance;
 
+        //        if (productId == QUOTE_PRODUCT_ID) {
+        //            quoteStates[RiskHelper.isoGroup(subaccount)] = state;
+        //        } else {
+        //            states[productId] = state;
+        //        }
         states[productId] = state;
         _balanceUpdate(productId, subaccount);
     }
@@ -216,23 +271,33 @@ contract SpotEngine is SpotEngineLP {
     // (i.e. if a user transfers tokens to the clearinghouse
     // without going through the standard deposit)
     function assertUtilization(uint32 productId) external view {
-        (State memory _state, ) = getStateAndBalance(productId, X_ACCOUNT);
+        (State memory _state, Balance memory _balance) = getStateAndBalance(
+            productId,
+            X_ACCOUNT
+        );
         int128 totalDeposits = _state.totalDepositsNormalized.mul(
             _state.cumulativeDepositsMultiplierX18
         );
         int128 totalBorrows = _state.totalBorrowsNormalized.mul(
             _state.cumulativeBorrowsMultiplierX18
         );
+        if (_balance.amount < 0 && migrationFlag == 0) {
+            totalDeposits += _balance.amount;
+        }
         require(totalDeposits >= totalBorrows, ERR_MAX_UTILIZATION);
     }
 
     function socializeSubaccount(bytes32 subaccount) external {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
-        uint32[] memory _productIds = getProductIds();
+        uint32 isoGroup = RiskHelper.isoGroup(subaccount);
+        uint32[] memory _productIds = getProductIds(isoGroup);
         for (uint128 i = 0; i < _productIds.length; ++i) {
             uint32 productId = _productIds[i];
 
+            //            State memory state = productId == QUOTE_PRODUCT_ID
+            //                ? _getQuoteState(isoGroup)
+            //                : states[productId];
             State memory state = states[productId];
             Balance memory balance = balanceNormalizedToBalance(
                 state,
@@ -245,8 +310,6 @@ contract SpotEngine is SpotEngineLP {
 
                 state.cumulativeDepositsMultiplierX18 = (totalDeposited +
                     balance.amount).div(state.totalDepositsNormalized);
-
-                require(state.cumulativeDepositsMultiplierX18 > 0);
 
                 state.totalBorrowsNormalized += balance.amount.div(
                     state.cumulativeBorrowsMultiplierX18
@@ -270,6 +333,11 @@ contract SpotEngine is SpotEngineLP {
                     _updateBalanceWithoutDelta(state, lpState.base);
                     lpStates[productId] = lpState;
                 }
+                //                if (productId == QUOTE_PRODUCT_ID) {
+                //                    quoteStates[isoGroup] = state;
+                //                } else {
+                //                    states[productId] = state;
+                //                }
                 states[productId] = state;
                 _balanceUpdate(productId, subaccount);
             }
@@ -282,6 +350,9 @@ contract SpotEngine is SpotEngineLP {
     ) external view {
         for (uint128 i = 0; i < totalDeposits.length; ++i) {
             uint32 productId = productIds[i];
+            //            State memory state = productId == QUOTE_PRODUCT_ID
+            //                ? quoteStates[0]
+            //                : states[productId];
             State memory state = states[productId];
             require(
                 state.totalDepositsNormalized.mul(
