@@ -29,6 +29,16 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
     // Whether an address can apply deltas - all orderbooks and clearinghouse is whitelisted
     mapping(address => bool) internal canApplyDeltas;
 
+    event BalanceUpdate(uint32 productId, bytes32 subaccount);
+    event ProductUpdate(uint32 productId);
+
+    function _productUpdate(uint32 productId) internal virtual {}
+
+    function _balanceUpdate(uint32 productId, bytes32 subaccount)
+        internal
+        virtual
+    {}
+
     function checkCanApplyDeltas() internal view virtual {
         require(canApplyDeltas[msg.sender], ERR_UNAUTHORIZED);
     }
@@ -73,6 +83,12 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         int128 lpSpreadX18
     ) internal returns (uint32 productId) {
         require(book != address(0));
+        require(
+            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial >=
+                riskStore.shortWeightMaintenance,
+            ERR_BAD_PRODUCT_CONFIG
+        );
 
         // register product with clearinghouse
         productId = _clearinghouse.registerProductForId(

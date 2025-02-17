@@ -60,14 +60,14 @@ abstract contract PerpEngineLp is PerpEngineState {
         lpStates[productId] = lpState;
         balances[productId][subaccount] = balance;
 
-        emit MintLp(productId, subaccount, toMint, amountBase, amountQuote);
+        _balanceUpdate(productId, subaccount);
     }
 
     function burnLp(
         uint32 productId,
         bytes32 subaccount,
         int128 amountLp
-    ) public returns (int128 amountQuote) {
+    ) public returns (int128 amountBase, int128 amountQuote) {
         checkCanApplyDeltas();
         require(amountLp > 0, ERR_INVALID_LP_AMOUNT);
         int128 sizeIncrement = IOffchainBook(getOrderbook(productId))
@@ -85,13 +85,13 @@ abstract contract PerpEngineLp is PerpEngineState {
             amountLp = lpBalance.amount;
         }
         if (amountLp == 0) {
-            return 0;
+            return (0, 0);
         }
 
         require(lpBalance.amount >= amountLp, ERR_INSUFFICIENT_LP);
         lpBalance.amount -= amountLp;
 
-        int128 amountBase = MathHelper.floor(
+        amountBase = MathHelper.floor(
             int128((int256(amountLp) * lpState.base) / lpState.supply),
             sizeIncrement
         );
@@ -112,12 +112,11 @@ abstract contract PerpEngineLp is PerpEngineState {
         states[productId] = state;
         balances[productId][subaccount] = balance;
 
-        emit BurnLp(productId, subaccount, amountLp, amountBase, amountQuote);
+        _balanceUpdate(productId, subaccount);
     }
 
     function swapLp(
         uint32 productId,
-        bytes32, /* subaccount */
         // maximum to swap
         int128 amount,
         int128 priceX18,
@@ -132,8 +131,6 @@ abstract contract PerpEngineLp is PerpEngineState {
             return (0, 0);
         }
 
-        State memory state = states[productId];
-
         (baseSwapped, quoteSwapped) = MathHelper.swap(
             amount,
             lpState.base,
@@ -143,12 +140,38 @@ abstract contract PerpEngineLp is PerpEngineState {
             lpSpreadX18
         );
 
-        state.openInterest += baseSwapped;
+        states[productId].openInterest += baseSwapped;
 
         lpState.base += baseSwapped;
         lpState.quote += quoteSwapped;
-        states[productId] = state;
         lpStates[productId] = lpState;
+        _productUpdate(productId);
+    }
+
+    function swapLp(
+        uint32 productId,
+        int128 baseDelta,
+        int128 quoteDelta
+    ) external returns (int128, int128) {
+        checkCanApplyDeltas();
+        LpState memory lpState = lpStates[productId];
+        require(
+            MathHelper.isSwapValid(
+                baseDelta,
+                quoteDelta,
+                lpState.base,
+                lpState.quote
+            ),
+            ERR_INVALID_MAKER
+        );
+
+        states[productId].openInterest += baseDelta;
+
+        lpState.base += baseDelta;
+        lpState.quote += quoteDelta;
+        lpStates[productId] = lpState;
+        _productUpdate(productId);
+        return (baseDelta, quoteDelta);
     }
 
     function decomposeLps(
@@ -158,7 +181,7 @@ abstract contract PerpEngineLp is PerpEngineState {
     ) external returns (int128 liquidationFees) {
         for (uint128 i = 0; i < productIds.length; ++i) {
             uint32 productId = productIds[i];
-            int128 amountQuote = burnLp(
+            (, int128 amountQuote) = burnLp(
                 productId,
                 liquidatee,
                 type(int128).max
@@ -169,7 +192,7 @@ abstract contract PerpEngineLp is PerpEngineState {
                         IClearinghouse(_clearinghouse).getRisk(productId),
                         amountQuote,
                         IProductEngine.HealthType.MAINTENANCE
-                    )) / 2
+                    )) / 50
             );
             int128 fees = rewards.mul(
                 IFeeCalculator(feeCalculator).getLiquidationFeeFractionX18(
@@ -191,6 +214,8 @@ abstract contract PerpEngineLp is PerpEngineState {
             states[productId] = state;
             balances[productId][liquidatee] = liquidateeBalance;
             balances[productId][liquidator] = liquidatorBalance;
+            _balanceUpdate(productId, liquidator);
+            _balanceUpdate(productId, liquidatee);
         }
     }
 }

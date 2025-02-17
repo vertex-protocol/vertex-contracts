@@ -10,7 +10,6 @@ import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./interfaces/engine/IProductEngine.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/IOffchainBook.sol";
-import "./libraries/KeyHelper.sol";
 import "./libraries/ERC20Helper.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
@@ -75,10 +74,8 @@ contract ClearinghouseLiq is
         uint32 perpId;
         int128 perpAmount;
         int128 perpVQuote;
-        int128 perpPriceX18;
         uint32 spotId;
         int128 spotAmount;
-        int128 spotPriceX18;
         int128 basisAmount;
     }
 
@@ -88,23 +85,26 @@ contract ClearinghouseLiq is
         uint32 groupId,
         bytes32 subaccount
     ) internal view returns (HealthGroupSummary memory summary) {
-        HealthGroup memory group = healthGroups[groupId];
+        HealthGroup memory group = HealthGroup(
+            groupId * 2 + 1,
+            groupId * 2 + 2
+        );
 
-        if (group.spotId != 0) {
+        summary.spotId = group.spotId;
+        summary.perpId = group.perpId;
+
+        // we pretend VRTX balance always being 0 to make it not liquidatable.
+        if (group.spotId != VRTX_PRODUCT_ID) {
             (, ISpotEngine.Balance memory balance) = spotEngine
                 .getStateAndBalance(group.spotId, subaccount);
             summary.spotAmount = balance.amount;
-            summary.spotPriceX18 = getOraclePriceX18(group.spotId);
-            summary.spotId = group.spotId;
         }
 
-        if (group.perpId != 0) {
+        {
             (, IPerpEngine.Balance memory balance) = perpEngine
                 .getStateAndBalance(group.perpId, subaccount);
             summary.perpAmount = balance.amount;
             summary.perpVQuote = balance.vQuoteBalance;
-            summary.perpPriceX18 = getOraclePriceX18(group.perpId);
-            summary.perpId = group.perpId;
         }
 
         if ((summary.spotAmount > 0) != (summary.perpAmount > 0)) {
@@ -122,20 +122,6 @@ contract ClearinghouseLiq is
             summary.spotAmount -= summary.basisAmount;
             summary.perpAmount += summary.basisAmount;
         }
-    }
-
-    enum LiquidationStatus {
-        CannotLiquidateLiabilities, // still has assets or perps
-        CannotSocialize, // still has basis liabilities
-        // must wait until basis liability liquidation is finished
-        // and only spot liabilities are remaining
-        // remaining: spot liabilities and perp losses
-        // if insurance drained:
-        // -> socialize all
-        // if insurance not drained
-        // -> if spot liabilities, exit
-        // -> else attempt to repay all from insurance
-        CanSocialize
     }
 
     function assertLiquidationAmount(
@@ -385,10 +371,16 @@ contract ClearinghouseLiq is
                 );
 
                 // settle positive pnl against the liquidator
-                int128 positionPnl = perpEngine.getPositionPnl(
-                    groupSummary.perpId,
-                    txn.liquidatee
-                );
+                int128 positionPnl;
+                if (groupSummary.basisAmount == 0) {
+                    positionPnl = groupSummary.perpVQuote;
+                } else {
+                    positionPnl = perpEngine.getPositionPnl(
+                        groupSummary.perpId,
+                        txn.liquidatee
+                    );
+                }
+
                 if (positionPnl > 0) {
                     settlePnlAgainstLiquidator(
                         spotEngine,
@@ -414,14 +406,12 @@ contract ClearinghouseLiq is
             .getMarket()
             .sizeIncrement;
 
-        {
+        if (summary.basisAmount != 0) {
             int128 excessBasisAmount = summary.basisAmount %
                 vars.perpSizeIncrement;
-            if (excessBasisAmount != 0) {
-                summary.basisAmount -= excessBasisAmount;
-                summary.spotAmount += excessBasisAmount;
-                summary.perpAmount -= excessBasisAmount;
-            }
+            summary.basisAmount -= excessBasisAmount;
+            summary.spotAmount += excessBasisAmount;
+            summary.perpAmount -= excessBasisAmount;
         }
 
         if (txn.mode != uint8(IEndpoint.LiquidationMode.SPOT)) {

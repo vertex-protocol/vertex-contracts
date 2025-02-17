@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./IProductEngine.sol";
+import "../clearinghouse/IClearinghouseState.sol";
 
 interface IPerpEngine is IProductEngine {
     struct State {
@@ -31,6 +32,15 @@ interface IPerpEngine is IProductEngine {
         // NOTE: funding payments should be rolled
         // into Balance.vQuoteBalance;
         int128 lastCumulativeFundingX18;
+    }
+
+    struct UpdateProductTx {
+        uint32 productId;
+        int128 sizeIncrement;
+        int128 priceIncrementX18;
+        int128 minSize;
+        int128 lpSpreadX18;
+        IClearinghouseState.RiskStore riskStore;
     }
 
     function getStateAndBalance(uint32 productId, bytes32 subaccount)
@@ -72,13 +82,6 @@ interface IPerpEngine is IProductEngine {
     function settlePnl(bytes32 subaccount, uint256 productIds)
         external
         returns (int128);
-
-    /// @notice Emitted during perp settlement
-    event SettlePnl(
-        bytes32 indexed subaccount,
-        uint32 productId,
-        int128 amount
-    );
 
     function getSettlementState(uint32 productId, bytes32 subaccount)
         external

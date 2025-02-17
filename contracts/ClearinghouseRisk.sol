@@ -15,15 +15,11 @@ abstract contract ClearinghouseRisk is IClearinghouseState, EndpointGated {
     using MathSD21x18 for int128;
 
     uint32 maxHealthGroup;
-    mapping(uint32 => HealthGroup) healthGroups;
+    mapping(uint32 => HealthGroup) healthGroups; // deprecated
     mapping(uint32 => RiskStore) risks;
 
-    function getHealthGroups() external view returns (HealthGroup[] memory) {
-        HealthGroup[] memory groups = new HealthGroup[](maxHealthGroup + 1);
-        for (uint32 i = 0; i <= maxHealthGroup; i++) {
-            groups[i] = healthGroups[i];
-        }
-        return groups;
+    function getMaxHealthGroup() external view returns (uint32) {
+        return maxHealthGroup;
     }
 
     function getRisk(uint32 productId)
@@ -49,18 +45,16 @@ abstract contract ClearinghouseRisk is IClearinghouseState, EndpointGated {
         view
         returns (int128)
     {
-        // we want to use the midpoint of maintenance weight and 1
         RiskHelper.Risk memory risk = getRisk(productId);
-
-        // we want to use the midpoint of maintenance weight and 1
         return
             getOraclePriceX18(productId).mul(
-                (ONE +
-                    RiskHelper._getWeightX18(
+                ONE +
+                    (RiskHelper._getWeightX18(
                         risk,
                         amount,
                         IProductEngine.HealthType.MAINTENANCE
-                    )) / 2
+                    ) - ONE) /
+                    5
             );
     }
 
@@ -76,7 +70,7 @@ abstract contract ClearinghouseRisk is IClearinghouseState, EndpointGated {
             perpRisk,
             MathHelper.abs(amount),
             IProductEngine.HealthType.MAINTENANCE
-        ) / 2;
+        ) / 5;
         if (amount > 0) {
             return
                 getOraclePriceX18(healthGroup.spotId).mul(

@@ -82,6 +82,14 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         return balance;
     }
 
+    function getBalanceAmount(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (int128)
+    {
+        return getBalance(productId, subaccount).amount;
+    }
+
     function hasBalance(uint32 productId, bytes32 subaccount)
         external
         view
@@ -136,25 +144,20 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
         return lpStates[productId];
     }
 
-    function getMarkPriceX18(uint32 productId) public view returns (int128) {
-        LpState memory lpState = lpStates[productId];
-        // if no instantaneous price available just use the oracle price
-        // and don't charge funding
-        if (lpState.base == 0) {
-            return getOraclePriceX18(productId);
-        }
-        return lpState.quote.div(lpState.base);
-    }
-
     function updateStates(uint128 dt, int128[] calldata avgPriceDiffs)
         external
         onlyEndpoint
     {
         int128 dtX18 = int128(dt).fromInt();
-        for (uint32 i = 0; i < productIds.length; i++) {
+        for (uint32 i = 0; i < avgPriceDiffs.length; i++) {
             uint32 productId = productIds[i];
-            LpState memory lpState = lpStates[productId];
             State memory state = states[productId];
+            if (state.openInterest == 0) {
+                continue;
+            }
+            require(dt < 7 * SECONDS_PER_DAY, ERR_INVALID_TIME);
+
+            LpState memory lpState = lpStates[productId];
 
             {
                 int128 indexPriceX18 = getOraclePriceX18(productId);
@@ -196,6 +199,7 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
             }
             lpStates[productId] = lpState;
             states[productId] = state;
+            _productUpdate(productId);
         }
     }
 }

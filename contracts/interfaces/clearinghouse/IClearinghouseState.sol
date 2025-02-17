@@ -35,7 +35,7 @@ interface IClearinghouseState {
         RiskHelper.Risk perpRisk;
     }
 
-    function getHealthGroups() external view returns (HealthGroup[] memory);
+    function getMaxHealthGroup() external view returns (uint32);
 
     function getRisk(uint32 productId)
         external

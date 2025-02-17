@@ -23,11 +23,16 @@ library RiskHelper {
         Risk memory perpRisk,
         int128 amount,
         IProductEngine.HealthType healthType
-    ) internal pure returns (int128) {
-        return
-            (ONE - _getWeightX18(spotRisk, amount, healthType)).mul(
-                ONE - _getWeightX18(perpRisk, amount, healthType)
-            );
+    ) internal pure returns (int128 spreadPenaltyX18) {
+        if (amount >= 0) {
+            spreadPenaltyX18 =
+                (ONE - _getWeightX18(perpRisk, amount, healthType)) /
+                5;
+        } else {
+            spreadPenaltyX18 =
+                (_getWeightX18(spotRisk, amount, healthType) - ONE) /
+                5;
+        }
     }
 
     function _getWeightX18(

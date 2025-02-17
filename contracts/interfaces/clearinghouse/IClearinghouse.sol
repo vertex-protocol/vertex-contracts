@@ -34,9 +34,12 @@ interface IClearinghouse is
 
     function mintLp(IEndpoint.MintLp calldata tx) external;
 
+    function mintLpSlowMode(IEndpoint.MintLp calldata tx) external;
+
     function burnLp(IEndpoint.BurnLp calldata tx) external;
 
-    function rebate(IEndpoint.Rebate calldata tx) external;
+    function burnLpAndTransfer(IEndpoint.BurnLpAndTransfer calldata tx)
+        external;
 
     function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata tx)
         external;
@@ -44,6 +47,13 @@ interface IClearinghouse is
     function depositInsurance(IEndpoint.DepositInsurance calldata tx) external;
 
     function settlePnl(IEndpoint.SettlePnl calldata tx) external;
+
+    function updateFeeRates(IEndpoint.UpdateFeeRates calldata tx) external;
+
+    function claimSequencerFees(
+        IEndpoint.ClaimSequencerFees calldata tx,
+        int128[] calldata fees
+    ) external;
 
     /// @notice Retrieve quote ERC20 address
     function getQuote() external view returns (address);
@@ -80,4 +90,10 @@ interface IClearinghouse is
 
     /// @notice Returns the amount of insurance remaining in this clearinghouse
     function getInsurance() external view returns (int128);
+
+    function getAllBooks() external view returns (address[] memory);
+
+    function upgradeClearinghouseLiq(address _clearinghouseLiq) external;
+
+    function getClearinghouseLiq() external view returns (address);
 }

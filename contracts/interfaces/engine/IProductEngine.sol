@@ -7,24 +7,6 @@ import "./IProductEngineState.sol";
 
 interface IProductEngine is IProductEngineState {
     event AddProduct(uint32 productId);
-    event ProductUpdate(uint32 indexed productId);
-    event SocializeProduct(uint32 indexed productId, int128 amountSocialized);
-
-    event MintLp(
-        uint32 indexed productId,
-        bytes32 indexed subaccount,
-        int128 lpAmount,
-        int128 baseAmount,
-        int128 quoteAmount
-    );
-
-    event BurnLp(
-        uint32 indexed productId,
-        bytes32 indexed subaccount,
-        int128 lpAmount,
-        int128 baseAmount,
-        int128 quoteAmount
-    );
 
     enum EngineType {
         SPOT,
@@ -57,14 +39,20 @@ interface IProductEngine is IProductEngineState {
     /// since tuples aren't a thing in solidity, params specify the transpose
     function applyDeltas(ProductDelta[] calldata deltas) external;
 
+    function updateProduct(bytes calldata txn) external;
+
     function swapLp(
         uint32 productId,
-        bytes32 subaccount,
-        // maximum to swap
         int128 amount,
         int128 priceX18,
         int128 sizeIncrement,
         int128 lpSpreadX18
+    ) external returns (int128, int128);
+
+    function swapLp(
+        uint32 productId,
+        int128 baseDelta,
+        int128 quoteDelta
     ) external returns (int128, int128);
 
     function mintLp(
@@ -80,7 +68,7 @@ interface IProductEngine is IProductEngineState {
         bytes32 subaccount,
         // passing 0 here means to burn all
         int128 amountLp
-    ) external returns (int128);
+    ) external returns (int128, int128);
 
     function decomposeLps(
         bytes32 liquidatee,

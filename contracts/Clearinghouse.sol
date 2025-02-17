@@ -2,14 +2,12 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "hardhat/console.sol";
 
 import "./common/Constants.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./interfaces/engine/IProductEngine.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/IOffchainBook.sol";
-import "./libraries/KeyHelper.sol";
 import "./libraries/ERC20Helper.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
@@ -19,6 +17,10 @@ import "./interfaces/IEndpoint.sol";
 import "./ClearinghouseRisk.sol";
 import "./ClearinghouseStorage.sol";
 import "./Version.sol";
+
+interface IProxyManager {
+    function getProxyManagerHelper() external view returns (address);
+}
 
 contract Clearinghouse is
     ClearinghouseRisk,
@@ -122,18 +124,23 @@ contract Clearinghouse is
         }
 
         for (uint32 i = 0; i <= maxHealthGroup; ++i) {
-            HealthGroup memory group = healthGroups[i];
+            HealthGroup memory group = HealthGroup(i * 2 + 1, i * 2 + 2);
             HealthVars memory healthVars;
             healthVars.pricesX18 = getOraclePricesX18(i);
 
-            if (
-                group.spotId != 0 &&
-                spotEngine.hasBalance(group.spotId, subaccount)
-            ) {
+            if (spotEngine.hasBalance(group.spotId, subaccount)) {
                 (
                     ISpotEngine.LpBalance memory lpBalance,
                     ISpotEngine.Balance memory balance
                 ) = spotEngine.getBalances(group.spotId, subaccount);
+
+                if (group.spotId == VRTX_PRODUCT_ID) {
+                    // health will be negative as long as VRTX balance is negative,
+                    // so that nobody can borrow it.
+                    if (balance.amount < 0) {
+                        return -ONE;
+                    }
+                }
 
                 if (lpBalance.amount != 0) {
                     ISpotEngine.LpState memory lpState = spotEngine.getLpState(
@@ -354,20 +361,6 @@ contract Clearinghouse is
         }
         risks[productId] = riskStore;
 
-        require(
-            (engineType == IProductEngine.EngineType.SPOT &&
-                healthGroups[healthGroup].spotId == 0) ||
-                (engineType == IProductEngine.EngineType.PERP &&
-                    healthGroups[healthGroup].perpId == 0),
-            ERR_ALREADY_REGISTERED
-        );
-
-        if (engineType == IProductEngine.EngineType.SPOT) {
-            healthGroups[healthGroup].spotId = productId;
-        } else {
-            healthGroups[healthGroup].perpId = productId;
-        }
-
         if (healthGroup > maxHealthGroup) {
             require(
                 healthGroup == maxHealthGroup + 1,
@@ -394,6 +387,7 @@ contract Clearinghouse is
         virtual
         onlyEndpoint
     {
+        require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
@@ -429,6 +423,7 @@ contract Clearinghouse is
         virtual
         onlyEndpoint
     {
+        require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         IERC20Base token = IERC20Base(quote);
         int256 multiplier = int256(10**(MAX_DECIMALS - token.decimals()));
         int128 amount = int128(txn.amount) * int128(multiplier);
@@ -451,6 +446,7 @@ contract Clearinghouse is
         virtual
         onlyEndpoint
     {
+        require(txn.amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
@@ -498,6 +494,26 @@ contract Clearinghouse is
         require(!_isUnderInitial(txn.sender), ERR_SUBACCT_HEALTH);
     }
 
+    function mintLpSlowMode(IEndpoint.MintLp calldata txn)
+        external
+        virtual
+        onlyEndpoint
+    {
+        require(
+            txn.productId != QUOTE_PRODUCT_ID &&
+                productToEngine[txn.productId].getEngineType() ==
+                IProductEngine.EngineType.SPOT
+        );
+        productToEngine[txn.productId].mintLp(
+            txn.productId,
+            txn.sender,
+            int128(txn.amountBase),
+            int128(txn.quoteAmountLow),
+            int128(txn.quoteAmountHigh)
+        );
+        require(!_isUnderInitial(txn.sender), ERR_SUBACCT_HEALTH);
+    }
+
     function burnLp(IEndpoint.BurnLp calldata txn)
         external
         virtual
@@ -510,38 +526,139 @@ contract Clearinghouse is
         );
     }
 
-    function rebate(IEndpoint.Rebate calldata txn)
+    function burnLpAndTransfer(IEndpoint.BurnLpAndTransfer calldata txn)
         external
         virtual
         onlyEndpoint
     {
+        (int128 amountBase, int128 amountQuote) = productToEngine[txn.productId]
+            .burnLp(txn.productId, txn.sender, int128(txn.amount));
+
         IProductEngine.ProductDelta[]
-            memory deltas = IProductEngine.ProductDelta[](
-                new IProductEngine.ProductDelta[](txn.subaccounts.length + 1)
-            );
-        int128 totalRebates = 0;
-        for (uint128 i = 0; i < txn.subaccounts.length; ++i) {
-            require(txn.amounts[i] >= 0);
-            totalRebates += txn.amounts[i];
-            deltas[i] = IProductEngine.ProductDelta({
-                productId: QUOTE_PRODUCT_ID,
-                subaccount: txn.subaccounts[i],
-                amountDelta: txn.amounts[i],
-                vQuoteDelta: 0
-            });
-        }
-        deltas[txn.subaccounts.length] = IProductEngine.ProductDelta({
+            memory deltas = new IProductEngine.ProductDelta[](4);
+
+        deltas[0] = IProductEngine.ProductDelta({
             productId: QUOTE_PRODUCT_ID,
-            subaccount: FEES_ACCOUNT,
-            amountDelta: -totalRebates,
+            subaccount: txn.sender,
+            amountDelta: -amountQuote,
             vQuoteDelta: 0
         });
 
+        deltas[1] = IProductEngine.ProductDelta({
+            productId: QUOTE_PRODUCT_ID,
+            subaccount: txn.recipient,
+            amountDelta: amountQuote,
+            vQuoteDelta: 0
+        });
+
+        deltas[2] = IProductEngine.ProductDelta({
+            productId: txn.productId,
+            subaccount: txn.sender,
+            amountDelta: -amountBase,
+            vQuoteDelta: -amountQuote
+        });
+
+        deltas[3] = IProductEngine.ProductDelta({
+            productId: txn.productId,
+            subaccount: txn.recipient,
+            amountDelta: amountBase,
+            vQuoteDelta: amountQuote
+        });
+
+        productToEngine[txn.productId].applyDeltas(deltas);
+        require(!_isUnderInitial(txn.sender), ERR_SUBACCT_HEALTH);
+    }
+
+    function updateFeeRates(IEndpoint.UpdateFeeRates calldata txn)
+        external
+        virtual
+        onlyEndpoint
+    {
+        fees.updateFeeRates(
+            txn.user,
+            txn.productId,
+            txn.makerRateX18,
+            txn.takerRateX18
+        );
+    }
+
+    function claimSequencerFees(
+        IEndpoint.ClaimSequencerFees calldata txn,
+        int128[] calldata fees
+    ) external virtual onlyEndpoint {
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
-        spotEngine.applyDeltas(deltas);
-        require(!_isUnderInitial(FEES_ACCOUNT), ERR_SUBACCT_HEALTH);
+
+        IPerpEngine perpEngine = IPerpEngine(
+            address(engineByType[IProductEngine.EngineType.PERP])
+        );
+
+        uint32[] memory spotIds = spotEngine.getProductIds();
+        uint32[] memory perpIds = perpEngine.getProductIds();
+
+        IProductEngine.ProductDelta[]
+            memory spotDeltas = new IProductEngine.ProductDelta[](
+                spotIds.length * 2
+            );
+
+        IProductEngine.ProductDelta[]
+            memory perpDeltas = new IProductEngine.ProductDelta[](
+                perpIds.length * 2
+            );
+
+        require(spotIds[0] == QUOTE_PRODUCT_ID, ERR_INVALID_PRODUCT);
+
+        for (uint32 i = 1; i < spotIds.length; i++) {
+            spotDeltas[0].amountDelta += IOffchainBook(
+                productToEngine[spotIds[i]].getOrderbook(spotIds[i])
+            ).claimSequencerFee();
+        }
+
+        for (uint256 i = 0; i < spotIds.length; i++) {
+            (uint256 subaccountIdx, uint256 feesIdx) = (2 * i, 2 * i + 1);
+
+            spotDeltas[subaccountIdx].productId = spotIds[i];
+            spotDeltas[subaccountIdx].subaccount = txn.subaccount;
+            spotDeltas[subaccountIdx].amountDelta += fees[i];
+
+            ISpotEngine.Balance memory feeBalance = spotEngine.getBalance(
+                spotIds[i],
+                FEES_ACCOUNT
+            );
+
+            spotDeltas[subaccountIdx].amountDelta += feeBalance.amount;
+
+            spotDeltas[feesIdx].productId = spotIds[i];
+            spotDeltas[feesIdx].subaccount = FEES_ACCOUNT;
+            spotDeltas[feesIdx].amountDelta -= feeBalance.amount;
+        }
+
+        for (uint256 i = 0; i < perpIds.length; i++) {
+            (uint256 subaccountIdx, uint256 feesIdx) = (2 * i, 2 * i + 1);
+
+            perpDeltas[subaccountIdx].productId = perpIds[i];
+            perpDeltas[subaccountIdx].subaccount = txn.subaccount;
+            perpDeltas[subaccountIdx].vQuoteDelta += IOffchainBook(
+                productToEngine[perpIds[i]].getOrderbook(perpIds[i])
+            ).claimSequencerFee();
+
+            IPerpEngine.Balance memory feeBalance = perpEngine.getBalance(
+                perpIds[i],
+                FEES_ACCOUNT
+            );
+
+            perpDeltas[subaccountIdx].amountDelta += feeBalance.amount;
+            perpDeltas[subaccountIdx].vQuoteDelta += feeBalance.vQuoteBalance;
+
+            perpDeltas[feesIdx].productId = perpIds[i];
+            perpDeltas[feesIdx].subaccount = FEES_ACCOUNT;
+            perpDeltas[feesIdx].amountDelta -= feeBalance.amount;
+            perpDeltas[feesIdx].vQuoteDelta -= feeBalance.vQuoteBalance;
+        }
+
+        spotEngine.applyDeltas(spotDeltas);
+        perpEngine.applyDeltas(perpDeltas);
     }
 
     function _settlePnl(bytes32 subaccount, uint256 productIds) internal {
@@ -610,10 +727,32 @@ contract Clearinghouse is
         require(success, string(result));
     }
 
-    function upgradeClearinghouseLiq(address _clearinghouseLiq)
-        external
-        onlyOwner
-    {
+    struct AddressSlot {
+        address value;
+    }
+
+    function upgradeClearinghouseLiq(address _clearinghouseLiq) external {
+        AddressSlot storage proxyAdmin;
+        assembly {
+            proxyAdmin.slot := 0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103
+        }
+        require(
+            msg.sender ==
+                IProxyManager(proxyAdmin.value).getProxyManagerHelper(),
+            ERR_UNAUTHORIZED
+        );
         clearinghouseLiq = _clearinghouseLiq;
+    }
+
+    function getClearinghouseLiq() external view returns (address) {
+        return clearinghouseLiq;
+    }
+
+    function getAllBooks() external view returns (address[] memory) {
+        address[] memory allBooks = new address[](numProducts);
+        for (uint32 productId = 0; productId < numProducts; productId++) {
+            allBooks[productId] = IEndpoint(getEndpoint()).getBook(productId);
+        }
+        return allBooks;
     }
 }

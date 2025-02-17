@@ -45,11 +45,6 @@ contract PerpEngine is PerpEngineLp, Version {
         int128 lpSpreadX18,
         IClearinghouseState.RiskStore calldata riskStore
     ) public onlyOwner {
-        require(
-            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
-            ERR_BAD_PRODUCT_CONFIG
-        );
         uint32 productId = _addProductForId(
             healthGroup,
             riskStore,
@@ -78,27 +73,24 @@ contract PerpEngine is PerpEngineLp, Version {
 
     /// @notice changes the configs of a product, if a new book is provided
     /// also clears the book
-    function updateProduct(
-        uint32 productId,
-        int128 sizeIncrement,
-        int128 priceIncrementX18,
-        int128 minSize,
-        int128 lpSpreadX18,
-        IClearinghouseState.RiskStore calldata riskStore
-    ) public onlyOwner {
+    function updateProduct(bytes calldata tx) external onlyEndpoint {
+        UpdateProductTx memory tx = abi.decode(tx, (UpdateProductTx));
+        IClearinghouseState.RiskStore memory riskStore = tx.riskStore;
+
         require(
-            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
-                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
+            riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial >=
+                riskStore.shortWeightMaintenance,
             ERR_BAD_PRODUCT_CONFIG
         );
-        markets[productId].modifyConfig(
-            sizeIncrement,
-            priceIncrementX18,
-            minSize,
-            lpSpreadX18
+        markets[tx.productId].modifyConfig(
+            tx.sizeIncrement,
+            tx.priceIncrementX18,
+            tx.minSize,
+            tx.lpSpreadX18
         );
 
-        _clearinghouse.modifyProductConfig(productId, riskStore);
+        _clearinghouse.modifyProductConfig(tx.productId, riskStore);
     }
 
     /// @notice updates internal balances; given tuples of (product, subaccount, delta)
@@ -131,8 +123,7 @@ contract PerpEngine is PerpEngineLp, Version {
 
             states[productId] = state;
             balances[productId][subaccount] = balance;
-
-            emit ProductUpdate(productId);
+            _balanceUpdate(productId, subaccount);
         }
     }
 
@@ -145,25 +136,27 @@ contract PerpEngine is PerpEngineLp, Version {
 
         while (productIds != 0) {
             uint32 productId = uint32(productIds & ((1 << 32) - 1));
-            (
-                int128 canSettle,
-                LpState memory lpState,
-                LpBalance memory lpBalance,
-                State memory state,
-                Balance memory balance
-            ) = getSettlementState(productId, subaccount);
+            // otherwise it means the product is a spot.
+            if (productId % 2 == 0) {
+                (
+                    int128 canSettle,
+                    LpState memory lpState,
+                    LpBalance memory lpBalance,
+                    State memory state,
+                    Balance memory balance
+                ) = getSettlementState(productId, subaccount);
 
-            state.availableSettle -= canSettle;
-            balance.vQuoteBalance -= canSettle;
+                state.availableSettle -= canSettle;
+                balance.vQuoteBalance -= canSettle;
 
-            totalSettled += canSettle;
+                totalSettled += canSettle;
 
-            lpStates[productId] = lpState;
-            states[productId] = state;
-            lpBalances[productId][subaccount] = lpBalance;
-            balances[productId][subaccount] = balance;
-
-            emit SettlePnl(subaccount, productId, canSettle);
+                lpStates[productId] = lpState;
+                states[productId] = state;
+                lpBalances[productId][subaccount] = lpBalance;
+                balances[productId][subaccount] = balance;
+                _balanceUpdate(productId, subaccount);
+            }
             productIds >>= 32;
         }
         return totalSettled;
@@ -252,6 +245,7 @@ contract PerpEngine is PerpEngineLp, Version {
                 );
                 insurance -= insuranceCover;
                 balance.vQuoteBalance += insuranceCover;
+                state.availableSettle += insuranceCover;
 
                 // actually socialize if still not enough
                 if (balance.vQuoteBalance < 0) {
@@ -261,18 +255,36 @@ contract PerpEngine is PerpEngineLp, Version {
                     ) / 2;
                     state.cumulativeFundingLongX18 += fundingPerShare;
                     state.cumulativeFundingShortX18 -= fundingPerShare;
-                    states[productId] = state;
+
+                    LpState memory lpState = lpStates[productId];
+                    Balance memory tmp = Balance({
+                        amount: lpState.base,
+                        vQuoteBalance: 0,
+                        lastCumulativeFundingX18: lpState
+                            .lastCumulativeFundingX18
+                    });
+                    _updateBalance(state, tmp, 0, 0);
+                    if (lpState.supply != 0) {
+                        lpState.cumulativeFundingPerLpX18 += tmp
+                            .vQuoteBalance
+                            .div(lpState.supply);
+                    }
+                    lpState.lastCumulativeFundingX18 = state
+                        .cumulativeFundingLongX18;
+
+                    lpStates[productId] = lpState;
                     balance.vQuoteBalance = 0;
-                    emit SocializeProduct(productId, -balance.vQuoteBalance);
                 }
+                states[productId] = state;
                 balances[productId][subaccount] = balance;
+                _balanceUpdate(productId, subaccount);
             }
         }
         return insurance;
     }
 
     function manualAssert(int128[] calldata openInterests) external view {
-        for (uint128 i = 0; i < productIds.length; ++i) {
+        for (uint128 i = 0; i < openInterests.length; ++i) {
             uint32 productId = productIds[i];
             require(
                 states[productId].openInterest == openInterests[i],

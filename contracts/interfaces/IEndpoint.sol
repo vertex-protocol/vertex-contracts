@@ -7,12 +7,6 @@ import "./IVersion.sol";
 interface IEndpoint is IVersion {
     event SubmitTransactions();
 
-    event SubmitSlowModeTransaction(
-        uint64 executableAt,
-        address sender,
-        bytes tx
-    );
-
     // events that we parse transactions into
     enum TransactionType {
         LiquidateSubaccount,
@@ -29,10 +23,19 @@ interface IEndpoint is IVersion {
         SwapAMM,
         MatchOrderAMM,
         DumpFees,
-        ClaimSequencerFee,
+        ClaimSequencerFees,
         PerpTick,
         ManualAssert,
-        Rebate
+        Rebate,
+        UpdateProduct,
+        LinkSigner,
+        UpdateFeeRates,
+        BurnLpAndTransfer
+    }
+
+    struct UpdateProduct {
+        address engine;
+        bytes tx;
     }
 
     /// requires signature from sender
@@ -105,6 +108,17 @@ interface IEndpoint is IVersion {
         bytes signature;
     }
 
+    struct LinkSigner {
+        bytes32 sender;
+        bytes32 signer;
+        uint64 nonce;
+    }
+
+    struct SignedLinkSigner {
+        LinkSigner tx;
+        bytes signature;
+    }
+
     /// callable by endpoint; no signature verifications needed
     struct PerpTick {
         uint128 time;
@@ -124,6 +138,20 @@ interface IEndpoint is IVersion {
     struct Rebate {
         bytes32[] subaccounts;
         int128[] amounts;
+    }
+
+    struct UpdateFeeRates {
+        address user;
+        uint32 productId;
+        // the absolute value of fee rates can't be larger than 100%,
+        // so their X18 values are in the range [-1e18, 1e18], which
+        // can be stored by using int64.
+        int64 makerRateX18;
+        int64 takerRateX18;
+    }
+
+    struct ClaimSequencerFees {
+        bytes32 subaccount;
     }
 
     struct UpdatePrice {
@@ -152,14 +180,22 @@ interface IEndpoint is IVersion {
 
     struct MatchOrders {
         uint32 productId;
-        bool amm; // whether taker order should hit AMM first
+        bool amm; // whether taker order should hit AMM first (deprecated)
         SignedOrder taker;
         SignedOrder maker;
+    }
+
+    struct MatchOrdersWithSigner {
+        MatchOrders matchOrders;
+        address takerLinkedSigner;
+        address makerLinkedSigner;
     }
 
     // just swap against AMM -- theres no maker order
     struct MatchOrderAMM {
         uint32 productId;
+        int128 baseDelta;
+        int128 quoteDelta;
         SignedOrder taker;
     }
 
@@ -196,13 +232,36 @@ interface IEndpoint is IVersion {
         int128 perpPriceX18;
     }
 
+    struct BurnLpAndTransfer {
+        bytes32 sender;
+        uint32 productId;
+        uint128 amount;
+        bytes32 recipient;
+    }
+
     function depositCollateral(
         bytes12 subaccountName,
         uint32 productId,
         uint128 amount
     ) external;
 
+    function depositCollateralWithReferral(
+        bytes12 subaccountName,
+        uint32 productId,
+        uint128 amount,
+        string calldata referralCode
+    ) external;
+
+    function depositCollateralWithReferral(
+        bytes32 subaccount,
+        uint32 productId,
+        uint128 amount,
+        string calldata referralCode
+    ) external;
+
     function setBook(uint32 productId, address book) external;
+
+    function getBook(uint32 productId) external view returns (address);
 
     function submitTransactionsChecked(
         uint64 idx,
@@ -222,12 +281,12 @@ interface IEndpoint is IVersion {
 
     function getNonce(address sender) external view returns (uint64);
 
-    function getNumSubaccounts() external view returns (uint64);
-
-    function getSubaccountId(bytes32 subaccount) external view returns (uint64);
-
-    function getSubaccountById(uint64 subaccountId)
-        external
-        view
-        returns (bytes32);
+    //    function getNumSubaccounts() external view returns (uint64);
+    //
+    //    function getSubaccountId(bytes32 subaccount) external view returns (uint64);
+    //
+    //    function getSubaccountById(uint64 subaccountId)
+    //        external
+    //        view
+    //        returns (bytes32);
 }
