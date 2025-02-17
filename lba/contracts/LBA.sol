@@ -7,22 +7,10 @@ import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "./interfaces/ILBA.sol";
 import "./interfaces/IEndpoint.sol";
-import "./interfaces/ISanctionsList.sol";
-
-library X18Math {
-    uint256 private constant ONE_X18 = 1000000000000000000;
-
-    function mul(uint256 x, uint256 y) internal pure returns (uint256) {
-        return (x * y) / ONE_X18;
-    }
-
-    function div(uint256 x, uint256 y) internal pure returns (uint256) {
-        return (x * ONE_X18) / y;
-    }
-}
+import "prb-math/contracts/PRBMathUD60x18.sol";
 
 contract LBA is ILBA, OwnableUpgradeable {
-    using X18Math for uint256;
+    using PRBMathUD60x18 for uint256;
 
     uint32 constant QUOTE_PRODUCT_ID = 0;
     uint256 constant SLOW_MODE_FEE = 1_000_000_000_000_000_000; // $1
@@ -35,7 +23,6 @@ contract LBA is ILBA, OwnableUpgradeable {
     address usdcToken;
     address airdrop;
     address vertexEndpoint;
-    address sanctions;
 
     uint32 vrtxProductId;
 
@@ -52,19 +39,12 @@ contract LBA is ILBA, OwnableUpgradeable {
     mapping(address => uint256) lpWithdrawn;
     mapping(address => uint256) lastCumulativeRewardsPerShareX18;
     mapping(address => uint256) unclaimedRewards;
-    mapping(address => uint256) claimedRewards;
-
-    /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor() {
-        _disableInitializers();
-    }
 
     function initialize(
         address _vrtxToken,
         address _usdcToken,
         address _airdrop,
         address _vertexEndpoint,
-        address _sanctions,
         uint64 _depositStartTime,
         uint64 _depositEndTime,
         uint64 _withdrawEndTime,
@@ -77,18 +57,13 @@ contract LBA is ILBA, OwnableUpgradeable {
         usdcToken = _usdcToken;
         airdrop = _airdrop;
         vertexEndpoint = _vertexEndpoint;
-        sanctions = _sanctions;
 
         vrtxProductId = _vrtxProductId;
-        Config memory _config = Config(
-            _depositStartTime,
-            _depositEndTime,
-            _withdrawEndTime,
-            _lpVestStartTime,
-            _lpVestEndTime
-        );
-        _verifyConfig(_config);
-        config = _config;
+        config.depositStartTime = _depositStartTime;
+        config.depositEndTime = _depositEndTime;
+        config.withdrawEndTime = _withdrawEndTime;
+        config.lpVestStartTime = _lpVestStartTime;
+        config.lpVestEndTime = _lpVestEndTime;
 
         vrtxMultiplier = uint256(
             10 ** (DECIMALS - IERC20Metadata(vrtxToken).decimals())
@@ -98,7 +73,7 @@ contract LBA is ILBA, OwnableUpgradeable {
         );
     }
 
-    function getStage() public view returns (Stage stage) {
+    function getStage() external view returns (Stage stage) {
         uint64 currentTime = uint64(block.timestamp);
         if (currentTime < config.depositStartTime) {
             stage = Stage.NotStarted;
@@ -124,7 +99,7 @@ contract LBA is ILBA, OwnableUpgradeable {
     function depositVrtx(address account, uint256 amount) external {
         require(msg.sender == airdrop, "Unauthorized.");
         require(
-            getStage() == Stage.DepositingTokens,
+            this.getStage() == Stage.DepositingTokens,
             "Not in depositing stage."
         );
         SafeERC20.safeTransferFrom(
@@ -139,21 +114,16 @@ contract LBA is ILBA, OwnableUpgradeable {
 
     function depositUsdc(uint256 amount) external {
         require(
-            getStage() == Stage.DepositingTokens,
+            this.getStage() == Stage.DepositingTokens,
             "Not in depositing stage."
-        );
-        address sender = msg.sender;
-        require(
-            !ISanctionsList(sanctions).isSanctioned(sender),
-            "address is sanctioned."
         );
         SafeERC20.safeTransferFrom(
             IERC20(usdcToken),
-            sender,
+            msg.sender,
             address(this),
             amount
         );
-        usdcDeposited[sender] += amount;
+        usdcDeposited[msg.sender] += amount;
         state.totalUsdcDeposited += amount;
     }
 
@@ -193,30 +163,25 @@ contract LBA is ILBA, OwnableUpgradeable {
     function getMaxWithdrawableUsdc(
         address account
     ) external view returns (uint256) {
-        return _maxWithdrawableUsdc(account, getStage());
+        return _maxWithdrawableUsdc(account, this.getStage());
     }
 
     function withdrawUsdc(uint256 amount) external {
-        address sender = msg.sender;
+        Stage stage = this.getStage();
         require(amount > 0, "Cannot withdraw zero amount.");
         require(
-            !ISanctionsList(sanctions).isSanctioned(sender),
-            "address is sanctioned."
-        );
-        Stage stage = getStage();
-        require(
-            amount <= _maxWithdrawableUsdc(sender, stage),
+            amount <= _maxWithdrawableUsdc(msg.sender, stage),
             "Trying to withdraw more USDC than max withdrawable amount."
         );
-        usdcDeposited[sender] -= amount;
+        usdcDeposited[msg.sender] -= amount;
         state.totalUsdcDeposited -= amount;
         if (stage == Stage.WithdrawingUsdc) {
-            withdrawnUsdc[sender] = true;
+            withdrawnUsdc[msg.sender] = true;
         }
-        SafeERC20.safeTransfer(IERC20(usdcToken), sender, amount);
+        SafeERC20.safeTransfer(IERC20(usdcToken), msg.sender, amount);
     }
 
-    function getVrtxInitialPriceX18() public view returns (uint256 priceX18) {
+    function getVrtxInitialPriceX18() external view returns (uint256 priceX18) {
         if (state.totalVrtxDeposited != 0) {
             priceX18 = (state.totalUsdcDeposited * usdcMultiplier).div(
                 state.totalVrtxDeposited * vrtxMultiplier
@@ -225,7 +190,10 @@ contract LBA is ILBA, OwnableUpgradeable {
     }
 
     function depositToVertex() external onlyOwner {
-        require(getStage() == Stage.LBAFinished, "Not in LBAFinished stage.");
+        require(
+            this.getStage() == Stage.LBAFinished,
+            "Not in LBAFinished stage."
+        );
         depositedToVertex = true;
 
         // deposit all VRTX into vertex.
@@ -255,11 +223,11 @@ contract LBA is ILBA, OwnableUpgradeable {
 
     function mintLpInVertex() external onlyOwner {
         require(
-            getStage() == Stage.DepositedToVertex,
+            this.getStage() == Stage.DepositedToVertex,
             "Not in DepositedToVertex stage."
         );
 
-        uint256 vrtxInitialPriceX18 = getVrtxInitialPriceX18();
+        uint256 vrtxInitialPriceX18 = this.getVrtxInitialPriceX18();
         require(
             IEndpoint(vertexEndpoint).getPriceX18(vrtxProductId) ==
                 int128(int256(vrtxInitialPriceX18)),
@@ -306,7 +274,7 @@ contract LBA is ILBA, OwnableUpgradeable {
     function _initialLpBalance(
         address account
     ) internal view returns (uint256 initialLpBalance) {
-        uint256 vrtxInitialPriceX18 = getVrtxInitialPriceX18();
+        uint256 vrtxInitialPriceX18 = this.getVrtxInitialPriceX18();
         uint256 accountValue = usdcDeposited[account] *
             usdcMultiplier +
             (vrtxDeposited[account] * vrtxMultiplier).mul(vrtxInitialPriceX18);
@@ -322,17 +290,15 @@ contract LBA is ILBA, OwnableUpgradeable {
         }
     }
 
-    function getLpBalance(address account) public view returns (uint256) {
+    function getLpBalance(address account) external view returns (uint256) {
         return _initialLpBalance(account) - lpWithdrawn[account];
     }
 
     function getLockedLpBalance(
         address account
-    ) public view returns (uint256 lockedLpBalance) {
-        Stage stage = getStage();
-        if (stage < Stage.LpVesting) {
-            lockedLpBalance = _initialLpBalance(account);
-        } else if (stage == Stage.LpVesting) {
+    ) external view returns (uint256 lockedLpBalance) {
+        Stage stage = this.getStage();
+        if (stage == Stage.LpVesting) {
             uint64 elpased = uint64(block.timestamp) - config.lpVestStartTime;
             uint64 total = config.lpVestEndTime - config.lpVestStartTime;
             uint64 elpasedInDay = elpased / SECONDS_PER_DAY;
@@ -350,23 +316,18 @@ contract LBA is ILBA, OwnableUpgradeable {
 
     function getWithdrawableLpBalance(
         address account
-    ) public view returns (uint256) {
-        return getLpBalance(account) - getLockedLpBalance(account);
+    ) external view returns (uint256) {
+        return this.getLpBalance(account) - this.getLockedLpBalance(account);
     }
 
     function withdrawLiquidity(uint256 lpAmount) external {
         require(lpAmount > 0, "Can't withdraw zero liquidity.");
-        address sender = msg.sender;
         require(
-            !ISanctionsList(sanctions).isSanctioned(sender),
-            "address is sanctioned."
-        );
-        require(
-            getWithdrawableLpBalance(sender) >= lpAmount,
+            this.getWithdrawableLpBalance(msg.sender) >= lpAmount,
             "Withdrawing more LPs than max withdrawable amount."
         );
-        _updateRewards(sender);
-        lpWithdrawn[sender] += lpAmount;
+        _updateRewards(msg.sender);
+        lpWithdrawn[msg.sender] += lpAmount;
         state.totalLpWithdrawn += lpAmount;
 
         IEndpoint(vertexEndpoint).submitSlowModeTransaction(
@@ -380,7 +341,7 @@ contract LBA is ILBA, OwnableUpgradeable {
                         productId: vrtxProductId,
                         amount: uint128(lpAmount),
                         recipient: bytes32(
-                            abi.encodePacked(sender, DEFAULT_SUBACCOUNT)
+                            abi.encodePacked(msg.sender, DEFAULT_SUBACCOUNT)
                         )
                     })
                 )
@@ -400,16 +361,10 @@ contract LBA is ILBA, OwnableUpgradeable {
         uint256 diff = state.cumulativeRewardsPerShareX18 -
             lastCumulativeRewardsPerShareX18[account];
         if (diff > 0) {
-            unclaimedRewards[account] += getLpBalance(account).mul(diff);
+            unclaimedRewards[account] += this.getLpBalance(account).mul(diff);
             lastCumulativeRewardsPerShareX18[account] = state
                 .cumulativeRewardsPerShareX18;
         }
-    }
-
-    function getClaimedRewards(
-        address account
-    ) external view returns (uint256) {
-        return claimedRewards[account];
     }
 
     function getClaimableRewards(
@@ -419,7 +374,7 @@ contract LBA is ILBA, OwnableUpgradeable {
         uint256 diff = state.cumulativeRewardsPerShareX18 -
             lastCumulativeRewardsPerShareX18[account];
         if (diff > 0) {
-            claimableRewards += getLpBalance(account).mul(diff);
+            claimableRewards += this.getLpBalance(account).mul(diff);
         }
     }
 
@@ -436,37 +391,30 @@ contract LBA is ILBA, OwnableUpgradeable {
     }
 
     function claimRewards() external {
-        address sender = msg.sender;
-        require(
-            !ISanctionsList(sanctions).isSanctioned(sender),
-            "address is sanctioned."
-        );
-        _updateRewards(sender);
-        claimedRewards[sender] += unclaimedRewards[sender];
+        _updateRewards(msg.sender);
         SafeERC20.safeTransfer(
             IERC20(vrtxToken),
-            sender,
-            unclaimedRewards[sender]
+            msg.sender,
+            unclaimedRewards[msg.sender]
         );
-        unclaimedRewards[sender] = 0;
+        unclaimedRewards[msg.sender] = 0;
     }
 
-    function _verifyConfig(Config memory _config) internal pure {
-        require(
-            _config.depositStartTime < _config.depositEndTime,
-            "Invalid config: depositStartTime >= depositEndTime."
+    function updateConfig(
+        uint64 _depositStartTime,
+        uint64 _depositEndTime,
+        uint64 _withdrawEndTime,
+        uint64 _lpVestStartTime,
+        uint64 _lpVestEndTime,
+        uint32 _vrtxProductId
+    ) external onlyOwner {
+        config = Config(
+            _depositStartTime,
+            _depositEndTime,
+            _withdrawEndTime,
+            _lpVestStartTime,
+            _lpVestEndTime
         );
-        require(
-            _config.depositEndTime < _config.withdrawEndTime,
-            "Invalid config: depositEndTime >= withdrawEndTime"
-        );
-        require(
-            _config.withdrawEndTime < _config.lpVestStartTime,
-            "Invalid config: withdrawEndTime >= lpVestStartTime"
-        );
-        require(
-            _config.lpVestStartTime < _config.lpVestEndTime,
-            "Invalid config: lpVestStartTime >= lpVestEndTime"
-        );
+        vrtxProductId = _vrtxProductId;
     }
 }
