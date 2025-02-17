@@ -2,24 +2,8 @@
 pragma solidity ^0.8.0;
 
 import "./IProductEngine.sol";
-import "../../libraries/RiskHelper.sol";
 
 interface ISpotEngine is IProductEngine {
-    event SpotBalance(
-        bytes32 indexed subaccount,
-        uint32 indexed productId,
-        int128 amount,
-        int128 lastCumulativeMultiplierX18
-    );
-
-    event InterestPayment(
-        uint32 productId,
-        uint128 dt,
-        int128 depositRateMultiplierX18,
-        int128 borrowRateMultiplierX18,
-        int128 feeAmount
-    );
-
     struct Config {
         address token;
         int128 interestInflectionUtilX18;
@@ -59,15 +43,6 @@ interface ISpotEngine is IProductEngine {
         LpBalance lpBalance;
     }
 
-    struct UpdateProductTx {
-        uint32 productId;
-        int128 sizeIncrement;
-        int128 minSize;
-        int128 lpSpreadX18;
-        Config config;
-        RiskHelper.RiskStore riskStore;
-    }
-
     function getStateAndBalance(uint32 productId, bytes32 subaccount)
         external
         view
@@ -77,6 +52,11 @@ interface ISpotEngine is IProductEngine {
         external
         view
         returns (Balance memory);
+
+    function hasBalance(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (bool);
 
     function getStatesAndBalances(uint32 productId, bytes32 subaccount)
         external
@@ -88,31 +68,21 @@ interface ISpotEngine is IProductEngine {
             Balance memory
         );
 
+    function getBalances(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (LpBalance memory, Balance memory);
+
+    function getLpState(uint32 productId)
+        external
+        view
+        returns (LpState memory);
+
     function getConfig(uint32 productId) external view returns (Config memory);
 
-    function getToken(uint32 productId) external view returns (address);
-
-    function updateBalance(
-        uint32 productId,
-        bytes32 subaccount,
-        int128 amountDelta
-    ) external;
-
-    function updateBalance(
-        uint32 productId,
-        bytes32 subaccount,
-        int128 amountDelta,
-        int128 quoteDelta
-    ) external;
-
-    function updateQuoteFromInsurance(bytes32 subaccount, int128 insurance)
-        external
-        returns (int128);
+    function getWithdrawFee(uint32 productId) external view returns (int128);
 
     function updateStates(uint128 dt) external;
-
-    function updateMinDepositRate(uint32 productId, int128 minDepositRateX18)
-        external;
 
     function manualAssert(
         int128[] calldata totalDeposits,
@@ -120,6 +90,4 @@ interface ISpotEngine is IProductEngine {
     ) external view;
 
     function socializeSubaccount(bytes32 subaccount) external;
-
-    function assertUtilization(uint32 productId) external view;
 }

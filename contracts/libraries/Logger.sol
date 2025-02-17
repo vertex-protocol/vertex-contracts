@@ -10,10 +10,6 @@ library Logger {
         emit VertexEVMLog(message);
     }
 
-    function log(int128 value) internal {
-        log(MathHelper.int2str(value));
-    }
-
     function log(string memory message, int128 value) internal {
         log(string.concat(message, " ", MathHelper.int2str(value)));
     }
@@ -21,10 +17,6 @@ library Logger {
     function log(string memory message, uint128 value) internal {
         log(string.concat(message, " ", MathHelper.uint2str(value)));
     }
-
-    //    function log(string memory message, uint32 value) internal {
-    //        log(message, uint128(value));
-    //    }
 
     function log(string memory message, address value) internal {
         log(

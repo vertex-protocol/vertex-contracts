@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "./SpotEngineState.sol";
-import "./libraries/Logger.sol";
+import "./OffchainBook.sol";
 
 abstract contract SpotEngineLP is SpotEngineState {
     using MathSD21x18 for int128;
@@ -14,15 +14,10 @@ abstract contract SpotEngineLP is SpotEngineState {
         int128 quoteAmountLow,
         int128 quoteAmountHigh
     ) external {
-        _assertInternal();
+        checkCanApplyDeltas();
         require(
             amountBase > 0 && quoteAmountLow > 0 && quoteAmountHigh > 0,
             ERR_INVALID_LP_AMOUNT
-        );
-
-        require(
-            _exchange().getMarketInfo(productId).quoteId == QUOTE_PRODUCT_ID,
-            ERR_INVALID_PRODUCT
         );
 
         LpState memory lpState = lpStates[productId];
@@ -30,7 +25,7 @@ abstract contract SpotEngineLP is SpotEngineState {
         State memory quote = states[QUOTE_PRODUCT_ID];
 
         int128 amountQuote = (lpState.base.amount == 0)
-            ? amountBase.mul(_risk(productId).priceX18)
+            ? amountBase.mul(getOraclePriceX18(productId))
             : amountBase.mul(lpState.quote.amount.div(lpState.base.amount));
         require(amountQuote >= quoteAmountLow, ERR_SLIPPAGE_TOO_HIGH);
         require(amountQuote <= quoteAmountHigh, ERR_SLIPPAGE_TOO_HIGH);
@@ -64,16 +59,15 @@ abstract contract SpotEngineLP is SpotEngineState {
         states[productId] = base;
         states[QUOTE_PRODUCT_ID] = quote;
 
-        _balanceUpdate(productId, subaccount);
-        _balanceUpdate(QUOTE_PRODUCT_ID, subaccount);
+        emit MintLp(productId, subaccount, toMint, amountBase, amountQuote);
     }
 
     function burnLp(
         uint32 productId,
         bytes32 subaccount,
         int128 amountLp
-    ) public returns (int128 amountBase, int128 amountQuote) {
-        _assertInternal();
+    ) public returns (int128 amountQuote) {
+        checkCanApplyDeltas();
         require(amountLp > 0, ERR_INVALID_LP_AMOUNT);
 
         LpState memory lpState = lpStates[productId];
@@ -85,13 +79,13 @@ abstract contract SpotEngineLP is SpotEngineState {
             amountLp = lpBalance.amount;
         }
         if (amountLp == 0) {
-            return (0, 0);
+            return 0;
         }
 
         require(lpBalance.amount >= amountLp, ERR_INSUFFICIENT_LP);
         lpBalance.amount -= amountLp;
 
-        amountBase = int128(
+        int128 amountBase = int128(
             (int256(amountLp) * lpState.base.amount) / lpState.supply
         );
         amountQuote = int128(
@@ -119,94 +113,103 @@ abstract contract SpotEngineLP is SpotEngineState {
         states[productId] = base;
         states[QUOTE_PRODUCT_ID] = quote;
 
-        _balanceUpdate(productId, subaccount);
-        _balanceUpdate(QUOTE_PRODUCT_ID, subaccount);
+        emit BurnLp(productId, subaccount, amountLp, amountBase, amountQuote);
     }
 
     function swapLp(
         uint32 productId,
-        int128 baseDelta,
-        int128 quoteDelta
-    ) external returns (int128, int128) {
-        _assertInternal();
+        bytes32, /* subaccount */
+        // maximum to swap
+        int128 amount,
+        int128 priceX18,
+        int128 sizeIncrement,
+        int128 lpSpreadX18
+    ) external returns (int128 baseSwapped, int128 quoteSwapped) {
+        checkCanApplyDeltas();
         LpState memory lpState = lpStates[productId];
-        require(
-            MathHelper.isSwapValid(
-                baseDelta,
-                quoteDelta,
-                lpState.base.amount,
-                lpState.quote.amount
-            ),
-            ERR_INVALID_MAKER
-        );
+
+        if (lpState.base.amount == 0 || lpState.quote.amount == 0) {
+            return (0, 0);
+        }
 
         int128 baseDepositsMultiplierX18 = states[productId]
             .cumulativeDepositsMultiplierX18;
         int128 quoteDepositsMultiplierX18 = states[QUOTE_PRODUCT_ID]
             .cumulativeDepositsMultiplierX18;
 
-        lpState.base.amount += baseDelta;
-        lpState.quote.amount += quoteDelta;
+        (baseSwapped, quoteSwapped) = MathHelper.swap(
+            amount,
+            lpState.base.amount,
+            lpState.quote.amount,
+            priceX18,
+            sizeIncrement,
+            lpSpreadX18
+        );
+
+        lpState.base.amount += baseSwapped;
+        lpState.quote.amount += quoteSwapped;
         lpStates[productId] = lpState;
 
-        states[productId].totalDepositsNormalized += baseDelta.div(
+        states[productId].totalDepositsNormalized += baseSwapped.div(
             baseDepositsMultiplierX18
         );
-        states[QUOTE_PRODUCT_ID].totalDepositsNormalized += quoteDelta.div(
+        states[QUOTE_PRODUCT_ID].totalDepositsNormalized += quoteSwapped.div(
             quoteDepositsMultiplierX18
         );
-        _productUpdate(productId);
-        return (baseDelta, quoteDelta);
+
+        // actual balance updates for the subaccount happen in OffchainBook
     }
 
-    function decomposeLps(bytes32 liquidatee, bytes32 liquidator)
-        external
-        returns (int128 liquidationFees)
-    {
-        uint32[] memory _productIds = getProductIds();
-        for (uint128 i = 0; i < _productIds.length; ++i) {
-            uint32 productId = _productIds[i];
-            (, int128 amountQuote) = burnLp(
+    function decomposeLps(
+        bytes32 liquidatee,
+        bytes32 liquidator,
+        address feeCalculator
+    ) external returns (int128 liquidationFees) {
+        int128 liquidationRewards = 0;
+        for (uint128 i = 0; i < productIds.length; ++i) {
+            uint32 productId = productIds[i];
+            int128 amountQuote = burnLp(
                 productId,
                 liquidatee,
                 type(int128).max
             );
-            if (amountQuote != 0) {
-                int128 rewards = amountQuote.mul(
-                    (ONE -
-                        RiskHelper._getWeightX18(
-                            _risk(productId),
-                            amountQuote,
-                            IProductEngine.HealthType.MAINTENANCE
-                        )) / 50
-                );
-                int128 fees = rewards.mul(LIQUIDATION_FEE_FRACTION);
-                rewards -= fees;
-                liquidationFees += fees;
-
-                State memory quote = states[QUOTE_PRODUCT_ID];
-                BalanceNormalized memory liquidateeQuote = balances[
-                    QUOTE_PRODUCT_ID
-                ][liquidatee].balance;
-                BalanceNormalized memory liquidatorQuote = balances[
-                    QUOTE_PRODUCT_ID
-                ][liquidator].balance;
-
-                _updateBalanceNormalized(
-                    quote,
-                    liquidateeQuote,
-                    -rewards - fees
-                );
-                _updateBalanceNormalized(quote, liquidatorQuote, rewards);
-
-                balances[QUOTE_PRODUCT_ID][liquidatee]
-                    .balance = liquidateeQuote;
-                balances[QUOTE_PRODUCT_ID][liquidator]
-                    .balance = liquidatorQuote;
-                states[QUOTE_PRODUCT_ID] = quote;
-                _balanceUpdate(QUOTE_PRODUCT_ID, liquidator);
-                _balanceUpdate(QUOTE_PRODUCT_ID, liquidatee);
-            }
+            int128 rewards = amountQuote.mul(
+                (ONE -
+                    RiskHelper._getWeightX18(
+                        IClearinghouse(_clearinghouse).getRisk(productId),
+                        amountQuote,
+                        IProductEngine.HealthType.MAINTENANCE
+                    )) / 2
+            );
+            int128 fees = rewards.mul(
+                IFeeCalculator(feeCalculator).getLiquidationFeeFractionX18(
+                    liquidator,
+                    productId
+                )
+            );
+            rewards -= fees;
+            liquidationRewards += rewards;
+            liquidationFees += fees;
         }
+
+        // transfer some of the burned proceeds to liquidator
+        State memory quote = states[QUOTE_PRODUCT_ID];
+        BalanceNormalized memory liquidateeQuote = balances[QUOTE_PRODUCT_ID][
+            liquidatee
+        ].balance;
+        BalanceNormalized memory liquidatorQuote = balances[QUOTE_PRODUCT_ID][
+            liquidator
+        ].balance;
+
+        _updateBalanceNormalized(
+            quote,
+            liquidateeQuote,
+            -liquidationRewards - liquidationFees
+        );
+        _updateBalanceNormalized(quote, liquidatorQuote, liquidationRewards);
+
+        balances[QUOTE_PRODUCT_ID][liquidatee].balance = liquidateeQuote;
+        balances[QUOTE_PRODUCT_ID][liquidator].balance = liquidatorQuote;
+        states[QUOTE_PRODUCT_ID] = quote;
     }
 }

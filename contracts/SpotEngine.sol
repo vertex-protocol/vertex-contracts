@@ -3,26 +3,27 @@ pragma solidity ^0.8.0;
 
 import "./common/Constants.sol";
 import "./common/Errors.sol";
+import "./interfaces/IOffchainBook.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/clearinghouse/IClearinghouse.sol";
 import "./libraries/MathHelper.sol";
 import "./libraries/MathSD21x18.sol";
-import "./libraries/RiskHelper.sol";
 import "./BaseEngine.sol";
 import "./SpotEngineState.sol";
 import "./SpotEngineLP.sol";
+import "./Version.sol";
 
-contract SpotEngine is SpotEngineLP {
+contract SpotEngine is SpotEngineLP, Version {
     using MathSD21x18 for int128;
 
     function initialize(
         address _clearinghouse,
-        address _offchainExchange,
         address _quote,
         address _endpoint,
-        address _admin
+        address _admin,
+        address _fees
     ) external {
-        _initialize(_clearinghouse, _offchainExchange, _endpoint, _admin);
+        _initialize(_clearinghouse, _quote, _endpoint, _admin, _fees);
 
         configs[QUOTE_PRODUCT_ID] = Config({
             token: _quote,
@@ -31,19 +32,13 @@ contract SpotEngine is SpotEngineLP {
             interestSmallCapX18: 4e16, // .04
             interestLargeCapX18: ONE // 1
         });
-        _risk().value[QUOTE_PRODUCT_ID] = RiskHelper.RiskStore({
-            longWeightInitial: 1e9,
-            shortWeightInitial: 1e9,
-            longWeightMaintenance: 1e9,
-            shortWeightMaintenance: 1e9,
-            priceX18: ONE
-        });
         states[QUOTE_PRODUCT_ID] = State({
             cumulativeDepositsMultiplierX18: ONE,
             cumulativeBorrowsMultiplierX18: ONE,
             totalDepositsNormalized: 0,
             totalBorrowsNormalized: 0
         });
+        withdrawFees[QUOTE_PRODUCT_ID] = 1e16;
         productIds.push(QUOTE_PRODUCT_ID);
         emit AddProduct(QUOTE_PRODUCT_ID);
     }
@@ -60,30 +55,50 @@ contract SpotEngine is SpotEngineLP {
         return configs[productId];
     }
 
+    function getWithdrawFee(uint32 productId) external view returns (int128) {
+        return withdrawFees[productId];
+    }
+
+    function setWithdrawFee(uint32 productId, int128 withdrawFee)
+        public
+        onlyOwner
+    {
+        if (productId == QUOTE_PRODUCT_ID) {
+            withdrawFees[QUOTE_PRODUCT_ID] = 1e16;
+        } else {
+            withdrawFees[productId] = withdrawFee;
+        }
+    }
+
     /**
      * Actions
      */
 
     /// @notice adds a new product with default parameters
     function addProduct(
-        uint32 productId,
-        uint32 quoteId,
+        uint32 healthGroup,
         address book,
         int128 sizeIncrement,
+        int128 priceIncrementX18,
         int128 minSize,
         int128 lpSpreadX18,
+        int128 withdrawFee,
         Config calldata config,
-        RiskHelper.RiskStore calldata riskStore
+        IClearinghouseState.RiskStore calldata riskStore
     ) public onlyOwner {
-        require(productId != QUOTE_PRODUCT_ID);
-        _addProductForId(
-            productId,
-            quoteId,
+        require(
+            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
+            ERR_BAD_PRODUCT_CONFIG
+        );
+        uint32 productId = _addProductForId(
+            healthGroup,
+            riskStore,
             book,
             sizeIncrement,
+            priceIncrementX18,
             minSize,
-            lpSpreadX18,
-            riskStore
+            lpSpreadX18
         );
 
         configs[productId] = config;
@@ -94,6 +109,8 @@ contract SpotEngine is SpotEngineLP {
             totalBorrowsNormalized: 0
         });
 
+        withdrawFees[productId] = withdrawFee;
+
         lpStates[productId] = LpState({
             supply: 0,
             quote: Balance({amount: 0, lastCumulativeMultiplierX18: ONE}),
@@ -101,142 +118,72 @@ contract SpotEngine is SpotEngineLP {
         });
     }
 
-    function updateProduct(bytes calldata rawTxn) external onlyEndpoint {
-        UpdateProductTx memory txn = abi.decode(rawTxn, (UpdateProductTx));
-        RiskHelper.RiskStore memory riskStore = txn.riskStore;
-
-        if (txn.productId != QUOTE_PRODUCT_ID) {
-            require(
-                riskStore.longWeightInitial <=
-                    riskStore.longWeightMaintenance &&
-                    riskStore.shortWeightInitial >=
-                    riskStore.shortWeightMaintenance &&
-                    configs[txn.productId].token == txn.config.token,
-                ERR_BAD_PRODUCT_CONFIG
-            );
-
-            RiskHelper.RiskStore memory r = _risk().value[txn.productId];
-            r.longWeightInitial = riskStore.longWeightInitial;
-            r.shortWeightInitial = riskStore.shortWeightInitial;
-            r.longWeightMaintenance = riskStore.longWeightMaintenance;
-            r.shortWeightMaintenance = riskStore.shortWeightMaintenance;
-            _risk().value[txn.productId] = r;
-
-            _exchange().updateMarket(
-                txn.productId,
-                type(uint32).max,
-                address(0),
-                txn.sizeIncrement,
-                txn.minSize,
-                txn.lpSpreadX18
-            );
-        }
-
-        configs[txn.productId] = txn.config;
-    }
-
-    function updateQuoteFromInsurance(bytes32 subaccount, int128 insurance)
-        external
-        returns (int128)
-    {
-        _assertInternal();
-        State memory state = states[QUOTE_PRODUCT_ID];
-        BalanceNormalized memory balanceNormalized = balances[QUOTE_PRODUCT_ID][
-            subaccount
-        ].balance;
-        int128 balanceAmount = balanceNormalizedToBalance(
-            state,
-            balanceNormalized
-        ).amount;
-        if (balanceAmount < 0) {
-            int128 topUpAmount = MathHelper.max(
-                MathHelper.min(insurance, -balanceAmount),
-                0
-            );
-            insurance -= topUpAmount;
-            _updateBalanceNormalized(state, balanceNormalized, topUpAmount);
-        }
-        states[QUOTE_PRODUCT_ID] = state;
-        balances[QUOTE_PRODUCT_ID][subaccount].balance = balanceNormalized;
-        return insurance;
-    }
-
-    function updateBalance(
+    function updateProduct(
         uint32 productId,
-        bytes32 subaccount,
-        int128 amountDelta,
-        int128 quoteDelta
-    ) external {
-        require(productId != QUOTE_PRODUCT_ID, ERR_INVALID_PRODUCT);
-        _assertInternal();
-        State memory state = states[productId];
-        State memory quoteState = states[QUOTE_PRODUCT_ID];
+        int128 sizeIncrement,
+        int128 priceIncrementX18,
+        int128 minSize,
+        int128 lpSpreadX18,
+        int128 withdrawFee,
+        Config calldata config,
+        IClearinghouseState.RiskStore calldata riskStore
+    ) public onlyOwner {
+        require(
+            riskStore.longWeightInitial < riskStore.longWeightMaintenance &&
+                riskStore.shortWeightInitial > riskStore.shortWeightMaintenance,
+            ERR_BAD_PRODUCT_CONFIG
+        );
+        markets[productId].modifyConfig(
+            sizeIncrement,
+            priceIncrementX18,
+            minSize,
+            lpSpreadX18
+        );
 
-        BalanceNormalized memory balance = balances[productId][subaccount]
-            .balance;
-
-        BalanceNormalized memory quoteBalance = balances[QUOTE_PRODUCT_ID][
-            subaccount
-        ].balance;
-
-        _updateBalanceNormalized(state, balance, amountDelta);
-        _updateBalanceNormalized(quoteState, quoteBalance, quoteDelta);
-
-        balances[productId][subaccount].balance = balance;
-        balances[QUOTE_PRODUCT_ID][subaccount].balance = quoteBalance;
-
-        states[productId] = state;
-        states[QUOTE_PRODUCT_ID] = quoteState;
-
-        _balanceUpdate(productId, subaccount);
-        _balanceUpdate(QUOTE_PRODUCT_ID, subaccount);
+        withdrawFees[productId] = withdrawFee;
+        configs[productId] = config;
+        _clearinghouse.modifyProductConfig(productId, riskStore);
     }
 
-    function updateBalance(
-        uint32 productId,
-        bytes32 subaccount,
-        int128 amountDelta
-    ) external {
-        _assertInternal();
+    /// @notice updates internal balances; given tuples of (product, subaccount, delta)
+    /// since tuples aren't a thing in solidity, params specify the transpose
+    function applyDeltas(ProductDelta[] calldata deltas) external {
+        checkCanApplyDeltas();
 
-        State memory state = states[productId];
+        // May load the same product multiple times
+        for (uint32 i = 0; i < deltas.length; i++) {
+            if (deltas[i].amountDelta == 0) {
+                continue;
+            }
 
-        BalanceNormalized memory balance = balances[productId][subaccount]
-            .balance;
-        _updateBalanceNormalized(state, balance, amountDelta);
-        balances[productId][subaccount].balance = balance;
+            uint32 productId = deltas[i].productId;
+            bytes32 subaccount = deltas[i].subaccount;
+            int128 amountDelta = deltas[i].amountDelta;
+            State memory state = states[productId];
+            BalanceNormalized memory balance = balances[productId][subaccount]
+                .balance;
 
-        states[productId] = state;
-        _balanceUpdate(productId, subaccount);
-    }
+            _updateBalanceNormalized(state, balance, amountDelta);
 
-    // only check on withdraw -- ensure that users can't withdraw
-    // funds that are in the Vertex contract but not officially
-    // 'deposited' into the Vertex system and counted in balances
-    // (i.e. if a user transfers tokens to the clearinghouse
-    // without going through the standard deposit)
-    function assertUtilization(uint32 productId) external view {
-        (State memory _state, ) = getStateAndBalance(productId, X_ACCOUNT);
-        int128 totalDeposits = _state.totalDepositsNormalized.mul(
-            _state.cumulativeDepositsMultiplierX18
-        );
-        int128 totalBorrows = _state.totalBorrowsNormalized.mul(
-            _state.cumulativeBorrowsMultiplierX18
-        );
-        require(totalDeposits >= totalBorrows, ERR_MAX_UTILIZATION);
+            states[productId].totalDepositsNormalized = state
+                .totalDepositsNormalized;
+            states[productId].totalBorrowsNormalized = state
+                .totalBorrowsNormalized;
+
+            balances[productId][subaccount].balance = balance;
+
+            emit ProductUpdate(productId);
+        }
     }
 
     function socializeSubaccount(bytes32 subaccount) external {
         require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
 
-        uint32[] memory _productIds = getProductIds();
-        for (uint128 i = 0; i < _productIds.length; ++i) {
-            uint32 productId = _productIds[i];
-
-            State memory state = states[productId];
-            Balance memory balance = balanceNormalizedToBalance(
-                state,
-                balances[productId][subaccount].balance
+        for (uint128 i = 0; i < productIds.length; ++i) {
+            uint32 productId = productIds[i];
+            (State memory state, Balance memory balance) = getStateAndBalance(
+                productId,
+                subaccount
             );
             if (balance.amount < 0) {
                 int128 totalDeposited = state.totalDepositsNormalized.mul(
@@ -246,32 +193,14 @@ contract SpotEngine is SpotEngineLP {
                 state.cumulativeDepositsMultiplierX18 = (totalDeposited +
                     balance.amount).div(state.totalDepositsNormalized);
 
-                require(state.cumulativeDepositsMultiplierX18 > 0);
+                emit SocializeProduct(productId, -balance.amount);
 
                 state.totalBorrowsNormalized += balance.amount.div(
                     state.cumulativeBorrowsMultiplierX18
                 );
 
                 balances[productId][subaccount].balance.amountNormalized = 0;
-
-                if (productId == QUOTE_PRODUCT_ID) {
-                    for (uint32 j = 0; j < _productIds.length; ++j) {
-                        uint32 baseProductId = _productIds[j];
-                        if (baseProductId == QUOTE_PRODUCT_ID) {
-                            continue;
-                        }
-                        LpState memory lpState = lpStates[baseProductId];
-                        _updateBalanceWithoutDelta(state, lpState.quote);
-                        lpStates[baseProductId] = lpState;
-                        _productUpdate(baseProductId);
-                    }
-                } else {
-                    LpState memory lpState = lpStates[productId];
-                    _updateBalanceWithoutDelta(state, lpState.base);
-                    lpStates[productId] = lpState;
-                }
                 states[productId] = state;
-                _balanceUpdate(productId, subaccount);
             }
         }
     }
@@ -280,7 +209,7 @@ contract SpotEngine is SpotEngineLP {
         int128[] calldata totalDeposits,
         int128[] calldata totalBorrows
     ) external view {
-        for (uint128 i = 0; i < totalDeposits.length; ++i) {
+        for (uint128 i = 0; i < productIds.length; ++i) {
             uint32 productId = productIds[i];
             State memory state = states[productId];
             require(
@@ -296,9 +225,5 @@ contract SpotEngine is SpotEngineLP {
                 ERR_DSYNC
             );
         }
-    }
-
-    function getToken(uint32 productId) external view returns (address) {
-        return address(configs[productId].token);
     }
 }

@@ -70,8 +70,6 @@ string constant ERR_ALREADY_REGISTERED = "AR";
 // invalid health group provided
 string constant ERR_INVALID_HEALTH_GROUP = "IHG";
 
-string constant ERR_GETTING_ZERO_HEALTH_GROUP = "GZHG";
-
 // trying to burn more LP than owned
 string constant ERR_INSUFFICIENT_LP = "ILP";
 
@@ -99,34 +97,3 @@ string constant ERR_INVALID_TIME = "ITI";
 string constant ERR_DSYNC = "DSYNC";
 
 string constant ERR_INVALID_SWAP_PARAMS = "ISP";
-
-string constant ERR_CONVERSION_OVERFLOW = "CO";
-
-string constant ERR_ONLY_CLEARINGHOUSE_CAN_SET_BOOK = "OCCSB";
-
-// we match on containing these strings in sequencer
-string constant ERR_INVALID_SUBMISSION_INDEX = "IX";
-string constant ERR_NO_SLOW_MODE_TXS_REMAINING = "no slow mode transactions remaining";
-string constant ERR_INVALID_COUNT = "IC";
-string constant ERR_SLOW_TX_TOO_RECENT = "STTR";
-string constant ERR_WALLET_NOT_TRANSFERABLE = "WNT";
-
-string constant ERR_WALLET_SANCTIONED = "WS";
-
-string constant ERR_SLOW_MODE_WRONG_SENDER = "SMWS";
-string constant ERR_WRONG_NONCE = "WN";
-
-// initially wanted to call this
-// ERR_FULL_UTILIZATION but the shortened
-// error string may make people mad on the frontend
-string constant ERR_MAX_UTILIZATION = "MU";
-
-string constant ERR_INVALID_RISK_GROUP = "IRG";
-
-string constant ERR_VERIFY_SCHNORR = "VSR";
-
-string constant ERR_DEPOSIT_TOO_SMALL = "DTS";
-
-string constant ERR_CODE_NOT_MATCH = "CNM";
-
-string constant ERR_INVALID_HOLDER_LIST = "IHL";

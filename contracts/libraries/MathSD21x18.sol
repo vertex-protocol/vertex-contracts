@@ -20,19 +20,6 @@ library MathSD21x18 {
         }
     }
 
-    function mulDiv(
-        int128 x,
-        int128 y,
-        int128 z
-    ) internal pure returns (int128) {
-        unchecked {
-            require(z != 0, ERR_DIV_BY_ZERO);
-            int256 result = (int256(x) * y) / z;
-            require(result >= MIN_X18 && result <= MAX_X18, ERR_OVERFLOW);
-            return int128(result);
-        }
-    }
-
     function toInt(int128 x) internal pure returns (int128) {
         unchecked {
             return int128(x / ONE_X18);

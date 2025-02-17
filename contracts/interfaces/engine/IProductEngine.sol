@@ -3,10 +3,28 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../clearinghouse/IClearinghouse.sol";
-import "../../libraries/RiskHelper.sol";
+import "./IProductEngineState.sol";
 
-interface IProductEngine {
+interface IProductEngine is IProductEngineState {
     event AddProduct(uint32 productId);
+    event ProductUpdate(uint32 indexed productId);
+    event SocializeProduct(uint32 indexed productId, int128 amountSocialized);
+
+    event MintLp(
+        uint32 indexed productId,
+        bytes32 indexed subaccount,
+        int128 lpAmount,
+        int128 baseAmount,
+        int128 quoteAmount
+    );
+
+    event BurnLp(
+        uint32 indexed productId,
+        bytes32 indexed subaccount,
+        int128 lpAmount,
+        int128 baseAmount,
+        int128 quoteAmount
+    );
 
     enum EngineType {
         SPOT,
@@ -26,38 +44,27 @@ interface IProductEngine {
         int128 vQuoteDelta;
     }
 
-    struct CoreRisk {
-        int128 amount;
-        int128 price;
-        int128 longWeight;
-    }
-
     /// @notice Initializes the engine
     function initialize(
         address _clearinghouse,
-        address _offchainExchange,
         address _quote,
         address _endpoint,
-        address _admin
+        address _admin,
+        address _fees
     ) external;
 
-    function getHealthContribution(
-        bytes32 subaccount,
-        IProductEngine.HealthType healthType
-    ) external view returns (int128);
-
-    function getCoreRisk(
-        bytes32 subaccount,
-        uint32 productId,
-        IProductEngine.HealthType healthType
-    ) external view returns (IProductEngine.CoreRisk memory);
-
-    function updateProduct(bytes calldata txn) external;
+    /// @notice updates internal balances; given tuples of (product, subaccount, delta)
+    /// since tuples aren't a thing in solidity, params specify the transpose
+    function applyDeltas(ProductDelta[] calldata deltas) external;
 
     function swapLp(
         uint32 productId,
-        int128 baseDelta,
-        int128 quoteDelta
+        bytes32 subaccount,
+        // maximum to swap
+        int128 amount,
+        int128 priceX18,
+        int128 sizeIncrement,
+        int128 lpSpreadX18
     ) external returns (int128, int128);
 
     function mintLp(
@@ -73,25 +80,11 @@ interface IProductEngine {
         bytes32 subaccount,
         // passing 0 here means to burn all
         int128 amountLp
-    ) external returns (int128, int128);
+    ) external returns (int128);
 
-    function decomposeLps(bytes32 liquidatee, bytes32 liquidator)
-        external
-        returns (int128);
-
-    /// @notice return clearinghouse addr
-    function getClearinghouse() external view returns (address);
-
-    /// @notice return productIds associated with engine
-    function getProductIds() external view returns (uint32[] memory);
-
-    function getRisk(uint32 productId)
-        external
-        view
-        returns (RiskHelper.Risk memory);
-
-    /// @notice return the type of engine
-    function getEngineType() external pure returns (IProductEngine.EngineType);
-
-    function updatePrice(uint32 productId, int128 priceX18) external;
+    function decomposeLps(
+        bytes32 liquidatee,
+        bytes32 liquidator,
+        address feeCalculator
+    ) external returns (int128);
 }

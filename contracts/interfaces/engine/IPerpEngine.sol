@@ -2,16 +2,8 @@
 pragma solidity ^0.8.0;
 
 import "./IProductEngine.sol";
-import "../../libraries/RiskHelper.sol";
 
 interface IPerpEngine is IProductEngine {
-    event FundingPayment(
-        uint32 productId,
-        uint128 dt,
-        int128 openInterest,
-        int128 payment
-    );
-
     struct State {
         int128 cumulativeFundingLongX18;
         int128 cumulativeFundingShortX18;
@@ -41,14 +33,6 @@ interface IPerpEngine is IProductEngine {
         int128 lastCumulativeFundingX18;
     }
 
-    struct UpdateProductTx {
-        uint32 productId;
-        int128 sizeIncrement;
-        int128 minSize;
-        int128 lpSpreadX18;
-        RiskHelper.RiskStore riskStore;
-    }
-
     function getStateAndBalance(uint32 productId, bytes32 subaccount)
         external
         view
@@ -58,6 +42,11 @@ interface IPerpEngine is IProductEngine {
         external
         view
         returns (Balance memory);
+
+    function hasBalance(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (bool);
 
     function getStatesAndBalances(uint32 productId, bytes32 subaccount)
         external
@@ -69,10 +58,27 @@ interface IPerpEngine is IProductEngine {
             Balance memory
         );
 
+    function getBalances(uint32 productId, bytes32 subaccount)
+        external
+        view
+        returns (LpBalance memory, Balance memory);
+
+    function getLpState(uint32 productId)
+        external
+        view
+        returns (LpState memory);
+
     /// @dev Returns amount settled and emits SettlePnl events for each product
     function settlePnl(bytes32 subaccount, uint256 productIds)
         external
         returns (int128);
+
+    /// @notice Emitted during perp settlement
+    event SettlePnl(
+        bytes32 indexed subaccount,
+        uint32 productId,
+        int128 amount
+    );
 
     function getSettlementState(uint32 productId, bytes32 subaccount)
         external
@@ -84,13 +90,6 @@ interface IPerpEngine is IProductEngine {
             State memory state,
             Balance memory balance
         );
-
-    function updateBalance(
-        uint32 productId,
-        bytes32 subaccount,
-        int128 amountDelta,
-        int128 vQuoteDelta
-    ) external;
 
     function updateStates(uint128 dt, int128[] calldata avgPriceDiffs) external;
 

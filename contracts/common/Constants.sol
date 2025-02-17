@@ -6,9 +6,6 @@ uint32 constant QUOTE_PRODUCT_ID = 0;
 
 /// @dev Fees account
 bytes32 constant FEES_ACCOUNT = bytes32(0);
-bytes32 constant X_ACCOUNT = 0x0000000000000000000000000000000000000000000000000000000000000001;
-
-string constant DEFAULT_REFERRAL_CODE = "-1";
 
 uint128 constant MINIMUM_LIQUIDITY = 10**3;
 
@@ -16,25 +13,11 @@ int128 constant ONE = 10**18;
 
 uint8 constant MAX_DECIMALS = 18;
 
-int128 constant TAKER_SEQUENCER_FEE = 0; // $0.00
+int128 constant TAKER_SEQUENCER_FEE = 25e15; // $0.025
 
 int128 constant SLOW_MODE_FEE = 1000000; // $1
 
-int128 constant FAST_WITHDRAWAL_FEE_RATE = 1_000_000_000_000_000; // 0.1%
+int128 constant LIQUIDATION_FEE = 25e16; // $0.25
+int128 constant HEALTHCHECK_FEE = 1e17; // $0.10
 
-int128 constant LIQUIDATION_FEE = 1e18; // $1
-int128 constant HEALTHCHECK_FEE = 1e18; // $1
-
-uint128 constant INT128_MAX = uint128(type(int128).max);
-
-uint64 constant SECONDS_PER_DAY = 3600 * 24;
-
-uint32 constant VRTX_PRODUCT_ID = 41;
-
-int128 constant LIQUIDATION_FEE_FRACTION = 500_000_000_000_000_000; // 50%
-
-int128 constant INTEREST_FEE_FRACTION = 200_000_000_000_000_000; // 20%
-
-int256 constant MIN_DEPOSIT_AMOUNT = 5 * ONE;
-
-uint32 constant MAX_ISOLATED_SUBACCOUNTS_PER_ADDRESS = 10;
+uint64 constant VERSION = 6;
