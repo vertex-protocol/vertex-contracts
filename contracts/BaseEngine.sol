@@ -27,15 +27,28 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
     // Whether an address can apply deltas - all orderbooks and clearinghouse is whitelisted
     mapping(address => bool) internal canApplyDeltas;
 
+    bytes32 internal constant CROSS_MASK_STORAGE =
+        keccak256("vertex.protocol.crossmask");
+
     bytes32 internal constant RISK_STORAGE = keccak256("vertex.protocol.risk");
 
     event BalanceUpdate(uint32 productId, bytes32 subaccount);
     event ProductUpdate(uint32 productId);
+    event QuoteProductUpdate(uint32 isoGroup);
 
     function _productUpdate(uint32 productId) internal virtual {}
 
+    function _quoteProductUpdate(uint32 isoGroup) internal virtual {}
+
     struct Uint256Slot {
         uint256 value;
+    }
+
+    function _crossMask() internal pure returns (Uint256Slot storage r) {
+        bytes32 slot = CROSS_MASK_STORAGE;
+        assembly {
+            r.slot := slot
+        }
     }
 
     struct RiskStoreMappingSlot {
@@ -99,7 +112,9 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         bytes32 subaccount,
         IProductEngine.HealthType healthType
     ) public view returns (int128 health) {
-        uint32[] memory _productIds = getProductIds();
+        uint32[] memory _productIds = getProductIds(
+            RiskHelper.isoGroup(subaccount)
+        );
         RiskStoreMappingSlot storage r = _risk();
 
         for (uint32 i = 0; i < _productIds.length; i++) {
@@ -200,22 +215,45 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         return productIds;
     }
 
+    function getProductIds(uint32 isoGroup)
+        public
+        view
+        virtual
+        returns (uint32[] memory);
+
+    function getCrossProductIds() internal view returns (uint32[] memory) {
+        uint256 mask = _crossMask().value;
+        uint256 tempMask = mask;
+        uint32 numProducts = 0;
+        while (tempMask > 0) {
+            tempMask = tempMask & (tempMask - 1);
+            numProducts++;
+        }
+
+        uint32[] memory crossProducts = new uint32[](numProducts);
+        // smallest productId to largest
+        for (uint32 j = 0; j < 256; j++) {
+            uint32 i = 255 - j;
+            if (((mask >> i) & 1) == 1) {
+                crossProducts[--numProducts] = i;
+            }
+        }
+        return crossProducts;
+    }
+
     function _addProductForId(
         uint32 productId,
-        uint32 quoteId,
+        RiskHelper.RiskStore memory riskStore,
         address virtualBook,
         int128 sizeIncrement,
         int128 minSize,
-        int128 lpSpreadX18,
-        RiskHelper.RiskStore memory riskStore
+        int128 lpSpreadX18
     ) internal {
         require(virtualBook != address(0));
         require(
             riskStore.longWeightInitial <= riskStore.longWeightMaintenance &&
-                riskStore.longWeightMaintenance <= 10**9 &&
                 riskStore.shortWeightInitial >=
-                riskStore.shortWeightMaintenance &&
-                riskStore.shortWeightMaintenance >= 10**9,
+                riskStore.shortWeightMaintenance,
             ERR_BAD_PRODUCT_CONFIG
         );
 
@@ -225,25 +263,18 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
         _clearinghouse.registerProduct(productId);
 
         productIds.push(productId);
-        // product ids are in ascending order
-        for (uint256 i = productIds.length - 1; i > 0; i--) {
-            if (productIds[i] < productIds[i - 1]) {
-                uint32 t = productIds[i];
-                productIds[i] = productIds[i - 1];
-                productIds[i - 1] = t;
-            } else {
-                break;
-            }
-        }
 
         _exchange().updateMarket(
             productId,
-            quoteId,
             virtualBook,
             sizeIncrement,
             minSize,
             lpSpreadX18
         );
+
+        if (productId < 256) {
+            _crossMask().value |= 1 << productId;
+        }
 
         emit AddProduct(productId);
     }

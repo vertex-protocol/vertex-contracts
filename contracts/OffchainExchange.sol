@@ -8,18 +8,19 @@ import "./interfaces/engine/IProductEngine.sol";
 import "./libraries/MathSD21x18.sol";
 import "./common/Constants.sol";
 import "./libraries/MathHelper.sol";
-import "./libraries/RiskHelper.sol";
 import "./libraries/Logger.sol";
 import "./interfaces/IOffchainExchange.sol";
 import "./EndpointGated.sol";
 import "./common/Errors.sol";
+import "./Version.sol";
 import "./interfaces/engine/ISpotEngine.sol";
 import "./interfaces/engine/IPerpEngine.sol";
 
 contract OffchainExchange is
     IOffchainExchange,
     EndpointGated,
-    EIP712Upgradeable
+    EIP712Upgradeable,
+    Version
 {
     using MathSD21x18 for int128;
     IClearinghouse internal clearinghouse;
@@ -37,28 +38,6 @@ contract OffchainExchange is
 
     mapping(address => bool) internal addressTouched;
     address[] internal customFeeAddresses;
-
-    mapping(uint32 => uint32) internal quoteIds;
-
-    // adding following two useless mappings to not break storage layout by FOffchainExchange.
-    mapping(uint32 => int128) internal uselessMapping1;
-    mapping(uint32 => int128) internal uselessMapping2;
-
-    // address -> mask (if the i-th bit is 1, it means the i-th iso subacc is being used)
-    mapping(address => uint256) internal isolatedSubaccountsMask;
-
-    // isolated subaccount -> subaccount
-    mapping(bytes32 => bytes32) internal parentSubaccounts;
-
-    // (subaccount, id) -> isolated subaccount
-    mapping(bytes32 => mapping(uint256 => bytes32))
-        internal isolatedSubaccounts;
-
-    // which isolated subaccount does an isolated order create
-    mapping(bytes32 => bytes32) internal digestToSubaccount;
-
-    // how much margin does an isolated order require
-    mapping(bytes32 => int128) internal digestToMargin;
 
     function getAllFeeRates(address[] memory users, uint32[] memory productIds)
         external
@@ -111,7 +90,6 @@ contract OffchainExchange is
         returns (MarketInfo memory m)
     {
         MarketInfoStore memory market = marketInfo[productId];
-        m.quoteId = quoteIds[productId];
         m.collectedFees = market.collectedFees;
         m.minSize = int128(market.minSize) * 1e9;
         m.sizeIncrement = int128(market.sizeIncrement) * 1e9;
@@ -153,64 +131,8 @@ contract OffchainExchange is
         }
     }
 
-    function tryCloseIsolatedSubaccount(bytes32 subaccount) external virtual {
-        require(msg.sender == address(clearinghouse), ERR_UNAUTHORIZED);
-        _tryCloseIsolatedSubaccount(subaccount);
-    }
-
-    function _tryCloseIsolatedSubaccount(bytes32 subaccount) internal {
-        uint32 productId = RiskHelper.getIsolatedProductId(subaccount);
-        if (productId == 0) {
-            return;
-        }
-        IPerpEngine.Balance memory balance = perpEngine.getBalance(
-            productId,
-            subaccount
-        );
-        if (balance.amount == 0) {
-            uint8 id = RiskHelper.getIsolatedId(subaccount);
-            address addr = address(uint160(bytes20(subaccount)));
-            bytes32 parent = parentSubaccounts[subaccount];
-            if (balance.vQuoteBalance != 0) {
-                perpEngine.updateBalance(
-                    productId,
-                    subaccount,
-                    0,
-                    -balance.vQuoteBalance
-                );
-                perpEngine.updateBalance(
-                    productId,
-                    parent,
-                    0,
-                    balance.vQuoteBalance
-                );
-            }
-            int128 quoteBalance = spotEngine
-                .getBalance(QUOTE_PRODUCT_ID, subaccount)
-                .amount;
-            if (quoteBalance != 0) {
-                spotEngine.updateBalance(
-                    QUOTE_PRODUCT_ID,
-                    subaccount,
-                    -quoteBalance
-                );
-                spotEngine.updateBalance(
-                    QUOTE_PRODUCT_ID,
-                    parent,
-                    quoteBalance
-                );
-            }
-            isolatedSubaccountsMask[addr] &= ~uint256(0) ^ (1 << id);
-            isolatedSubaccounts[parent][id] = bytes32(0);
-            parentSubaccounts[subaccount] = bytes32(0);
-
-            emit CloseIsolatedSubaccount(subaccount, parent);
-        }
-    }
-
     function _updateBalances(
         CallState memory callState,
-        uint32 quoteId,
         bytes32 subaccount,
         int128 baseDelta,
         int128 quoteDelta
@@ -223,21 +145,12 @@ contract OffchainExchange is
                 quoteDelta
             );
         } else {
-            if (quoteId == QUOTE_PRODUCT_ID) {
-                callState.spot.updateBalance(
-                    callState.productId,
-                    subaccount,
-                    baseDelta,
-                    quoteDelta
-                );
-            } else {
-                callState.spot.updateBalance(
-                    callState.productId,
-                    subaccount,
-                    baseDelta
-                );
-                callState.spot.updateBalance(quoteId, subaccount, quoteDelta);
-            }
+            callState.spot.updateBalance(
+                callState.productId,
+                subaccount,
+                baseDelta,
+                quoteDelta
+            );
         }
     }
 
@@ -258,33 +171,24 @@ contract OffchainExchange is
         );
     }
 
-    function requireEngine() internal virtual {
+    function updateMarket(
+        uint32 productId,
+        address virtualBook,
+        int128 sizeIncrement,
+        int128 minSize,
+        int128 lpSpreadX18
+    ) external virtual {
         require(
             msg.sender == address(spotEngine) ||
                 msg.sender == address(perpEngine),
             "only engine can modify config"
         );
-    }
-
-    function updateMarket(
-        uint32 productId,
-        uint32 quoteId,
-        address virtualBook,
-        int128 sizeIncrement,
-        int128 minSize,
-        int128 lpSpreadX18
-    ) external {
-        requireEngine();
         if (virtualBook != address(0)) {
             require(
                 virtualBookContract[productId] == address(0),
                 "virtual book already set"
             );
             virtualBookContract[productId] = virtualBook;
-        }
-
-        if (quoteId != type(uint32).max) {
-            quoteIds[productId] = quoteId;
         }
 
         marketInfo[productId].minSize = int64(minSize / 1e9);
@@ -375,18 +279,12 @@ contract OffchainExchange is
         MarketInfo memory,
         IEndpoint.SignedOrder memory signedOrder,
         bytes32 orderDigest,
-        address /* linkedSigner */
+        address linkedSigner
     ) internal view returns (bool) {
         if (signedOrder.order.sender == X_ACCOUNT) {
             return true;
         }
         IEndpoint.Order memory order = signedOrder.order;
-        uint32 isolatedProductId = RiskHelper.getIsolatedProductId(
-            order.sender
-        );
-        if (isolatedProductId != 0) {
-            require(callState.productId == isolatedProductId, ERR_UNAUTHORIZED);
-        }
         int128 filledAmount = filledAmounts[orderDigest];
         order.amount -= filledAmount;
 
@@ -591,7 +489,6 @@ contract OffchainExchange is
 
         _updateBalances(
             callState,
-            market.quoteId,
             maker.sender,
             -takerAmountDelta,
             makerQuoteDelta
@@ -625,10 +522,6 @@ contract OffchainExchange is
         // otherwise modifications we make to the order's amounts
         // don't persist
         IEndpoint.SignedOrder memory taker = txn.taker;
-        require(
-            !RiskHelper.isIsolatedSubaccount(taker.order.sender),
-            ERR_UNAUTHORIZED
-        );
 
         require(
             _validateOrder(
@@ -664,7 +557,6 @@ contract OffchainExchange is
 
         _updateBalances(
             callState,
-            market.quoteId,
             taker.order.sender,
             takerAmountDelta,
             takerQuoteDelta
@@ -706,117 +598,110 @@ contract OffchainExchange is
         int128 takerQuoteDelta;
         OrdersInfo memory ordersInfo;
 
-        MarketInfo memory market = getMarketInfo(callState.productId);
-        IEndpoint.SignedOrder memory taker = txn.matchOrders.taker;
-        IEndpoint.SignedOrder memory maker = txn.matchOrders.maker;
-        ordersInfo = OrdersInfo({
-            takerDigest: getDigest(callState.productId, taker.order),
-            makerDigest: getDigest(callState.productId, maker.order),
-            makerAmount: maker.order.amount
-        });
-        if (digestToSubaccount[ordersInfo.takerDigest] != bytes32(0)) {
-            taker.order.sender = digestToSubaccount[ordersInfo.takerDigest];
-        }
-        if (digestToSubaccount[ordersInfo.makerDigest] != bytes32(0)) {
-            maker.order.sender = digestToSubaccount[ordersInfo.makerDigest];
-        }
+        {
+            MarketInfo memory market = getMarketInfo(callState.productId);
+            IEndpoint.SignedOrder memory taker = txn.matchOrders.taker;
+            IEndpoint.SignedOrder memory maker = txn.matchOrders.maker;
+            ordersInfo = OrdersInfo({
+                takerDigest: getDigest(callState.productId, taker.order),
+                makerDigest: getDigest(callState.productId, maker.order),
+                makerAmount: maker.order.amount
+            });
 
-        takerAmount = taker.order.amount;
+            takerAmount = taker.order.amount;
 
-        require(
-            _validateOrder(
-                callState,
-                market,
-                taker,
-                ordersInfo.takerDigest,
-                txn.takerLinkedSigner
-            ),
-            ERR_INVALID_TAKER
-        );
-        require(
-            _validateOrder(
-                callState,
-                market,
-                maker,
-                ordersInfo.makerDigest,
-                txn.makerLinkedSigner
-            ),
-            ERR_INVALID_MAKER
-        );
-
-        // ensure orders are crossing
-        require(
-            (maker.order.amount > 0) != (taker.order.amount > 0),
-            ERR_ORDERS_CANNOT_BE_MATCHED
-        );
-        if (maker.order.amount > 0) {
             require(
-                maker.order.priceX18 >= taker.order.priceX18,
+                _validateOrder(
+                    callState,
+                    market,
+                    taker,
+                    ordersInfo.takerDigest,
+                    txn.takerLinkedSigner
+                ),
+                ERR_INVALID_TAKER
+            );
+            require(
+                _validateOrder(
+                    callState,
+                    market,
+                    maker,
+                    ordersInfo.makerDigest,
+                    txn.makerLinkedSigner
+                ),
+                ERR_INVALID_MAKER
+            );
+
+            // ensure orders are crossing
+            require(
+                (maker.order.amount > 0) != (taker.order.amount > 0),
                 ERR_ORDERS_CANNOT_BE_MATCHED
             );
-        } else {
-            require(
-                maker.order.priceX18 <= taker.order.priceX18,
-                ERR_ORDERS_CANNOT_BE_MATCHED
+            if (maker.order.amount > 0) {
+                require(
+                    maker.order.priceX18 >= taker.order.priceX18,
+                    ERR_ORDERS_CANNOT_BE_MATCHED
+                );
+            } else {
+                require(
+                    maker.order.priceX18 <= taker.order.priceX18,
+                    ERR_ORDERS_CANNOT_BE_MATCHED
+                );
+            }
+
+            (takerAmountDelta, takerQuoteDelta) = _matchOrderOrder(
+                callState,
+                market,
+                taker.order,
+                maker.order,
+                ordersInfo
             );
+
+            // apply the taker fee
+            (takerFee, takerQuoteDelta) = feeAmount(
+                callState.productId,
+                taker.order.sender,
+                market,
+                takerAmountDelta,
+                takerQuoteDelta,
+                takerAmount - taker.order.amount - takerAmountDelta,
+                maker.order.priceX18,
+                true
+            );
+
+            _updateBalances(
+                callState,
+                taker.order.sender,
+                takerAmountDelta,
+                takerQuoteDelta
+            );
+
+            require(isHealthy(taker.order.sender), ERR_INVALID_TAKER);
+            require(isHealthy(maker.order.sender), ERR_INVALID_MAKER);
+
+            marketInfo[callState.productId].collectedFees = market
+                .collectedFees;
+
+            if (txn.matchOrders.taker.order.sender != X_ACCOUNT) {
+                filledAmounts[ordersInfo.takerDigest] =
+                    takerAmount -
+                    taker.order.amount;
+            }
+
+            if (txn.matchOrders.maker.order.sender != X_ACCOUNT) {
+                filledAmounts[ordersInfo.makerDigest] =
+                    ordersInfo.makerAmount -
+                    maker.order.amount;
+            }
         }
-
-        (takerAmountDelta, takerQuoteDelta) = _matchOrderOrder(
-            callState,
-            market,
-            taker.order,
-            maker.order,
-            ordersInfo
-        );
-
-        // apply the taker fee
-        (takerFee, takerQuoteDelta) = feeAmount(
-            callState.productId,
-            taker.order.sender,
-            market,
-            takerAmountDelta,
-            takerQuoteDelta,
-            takerAmount - taker.order.amount - takerAmountDelta,
-            maker.order.priceX18,
-            true
-        );
-
-        _updateBalances(
-            callState,
-            market.quoteId,
-            taker.order.sender,
-            takerAmountDelta,
-            takerQuoteDelta
-        );
-
-        require(isHealthy(taker.order.sender), ERR_INVALID_TAKER);
-        require(isHealthy(maker.order.sender), ERR_INVALID_MAKER);
-
-        marketInfo[callState.productId].collectedFees = market.collectedFees;
-
-        if (taker.order.sender != X_ACCOUNT) {
-            filledAmounts[ordersInfo.takerDigest] =
-                takerAmount -
-                taker.order.amount;
-        }
-
-        if (maker.order.sender != X_ACCOUNT) {
-            filledAmounts[ordersInfo.makerDigest] =
-                ordersInfo.makerAmount -
-                maker.order.amount;
-        }
-
-        _tryCloseIsolatedSubaccount(taker.order.sender);
-        _tryCloseIsolatedSubaccount(maker.order.sender);
 
         emit FillOrder(
             callState.productId,
             ordersInfo.takerDigest,
-            taker.order.sender,
-            taker.order.priceX18,
+            txn.matchOrders.taker.order.sender,
+            txn.matchOrders.taker.order.priceX18,
             takerAmount,
-            taker.order.expiration,
-            taker.order.nonce,
+            txn.matchOrders.taker.order.expiration,
+            txn.matchOrders.taker.order.nonce,
             true,
             takerFee,
             takerAmountDelta,
@@ -825,11 +710,8 @@ contract OffchainExchange is
     }
 
     function swapAMM(IEndpoint.SwapAMM calldata txn) external onlyEndpoint {
-        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         MarketInfo memory market = getMarketInfo(txn.productId);
         CallState memory callState = _getCallState(txn.productId);
-
-        require(txn.priceX18 > 0, ERR_INVALID_PRICE);
 
         if (callState.isPerp) {
             require(
@@ -866,7 +748,6 @@ contract OffchainExchange is
 
         _updateBalances(
             callState,
-            market.quoteId,
             txn.sender,
             takerAmountDelta,
             takerQuoteDelta
@@ -896,7 +777,7 @@ contract OffchainExchange is
             }
 
             spotEngine.updateBalance(
-                quoteIds[productId],
+                QUOTE_PRODUCT_ID,
                 FEES_ACCOUNT,
                 market.collectedFees
             );
@@ -936,12 +817,7 @@ contract OffchainExchange is
         ][productId];
         if (userFeeRates.isNonDefault == 0) {
             // use the default fee rates.
-            if (block.chainid == 80094 || block.chainid == 80084) {
-                // defaults for Berachain maker: 2bps / taker: 5bps
-                userFeeRates = FeeRates(200_000_000_000_000, 500_000_000_000_000, 1);
-            } else {
-                userFeeRates = FeeRates(0, 200_000_000_000_000, 1);
-            }
+            userFeeRates = FeeRates(0, 200_000_000_000_000, 1);
         }
         return taker ? userFeeRates.takerRateX18 : userFeeRates.makerRateX18;
     }
@@ -956,12 +832,7 @@ contract OffchainExchange is
         ][productId];
         if (userFeeRates.isNonDefault == 0) {
             // use the default fee rates.
-            if (block.chainid == 80094 || block.chainid == 80084) {
-                // defaults for Berachain maker: 2bps / taker: 5bps
-                userFeeRates = FeeRates(200_000_000_000_000, 500_000_000_000_000, 1);
-            } else {
-                userFeeRates = FeeRates(0, 200_000_000_000_000, 1);
-            }
+            userFeeRates = FeeRates(0, 200_000_000_000_000, 1);
         }
         return (userFeeRates.takerRateX18, userFeeRates.makerRateX18);
     }
@@ -976,29 +847,7 @@ contract OffchainExchange is
             addressTouched[user] = true;
             customFeeAddresses.push(user);
         }
-        if (productId == QUOTE_PRODUCT_ID) {
-            uint32[] memory spotProductIds = spotEngine.getProductIds();
-            uint32[] memory perpProductIds = perpEngine.getProductIds();
-            for (uint32 i = 0; i < spotProductIds.length; i++) {
-                if (spotProductIds[i] == QUOTE_PRODUCT_ID) {
-                    continue;
-                }
-                feeRates[user][spotProductIds[i]] = FeeRates(
-                    makerRateX18,
-                    takerRateX18,
-                    1
-                );
-            }
-            for (uint32 i = 0; i < perpProductIds.length; i++) {
-                feeRates[user][perpProductIds[i]] = FeeRates(
-                    makerRateX18,
-                    takerRateX18,
-                    1
-                );
-            }
-        } else {
-            feeRates[user][productId] = FeeRates(makerRateX18, takerRateX18, 1);
-        }
+        feeRates[user][productId] = FeeRates(makerRateX18, takerRateX18, 1);
     }
 
     function getVirtualBook(uint32 productId) external view returns (address) {
@@ -1028,172 +877,20 @@ contract OffchainExchange is
         return virtualBooks;
     }
 
-    function getIsolatedDigest(
-        uint32 productId,
-        IEndpoint.IsolatedOrder memory order
-    ) public view returns (bytes32) {
-        string
-            memory structType = "IsolatedOrder(bytes32 sender,int128 priceX18,int128 amount,uint64 expiration,uint64 nonce,int128 margin)";
-
-        bytes32 structHash = keccak256(
-            abi.encode(
-                keccak256(bytes(structType)),
-                order.sender,
-                order.priceX18,
-                order.amount,
-                order.expiration,
-                order.nonce,
-                order.margin
-            )
-        );
-
-        bytes32 domainSeparator = keccak256(
-            abi.encode(
-                _TYPE_HASH,
-                _EIP712NameHash(),
-                _EIP712VersionHash(),
-                block.chainid,
-                address(virtualBookContract[productId])
-            )
-        );
-
-        return ECDSAUpgradeable.toTypedDataHash(domainSeparator, structHash);
-    }
-
-    function createIsolatedSubaccount(
-        IEndpoint.CreateIsolatedSubaccount memory txn,
-        address linkedSigner
-    ) external onlyEndpoint returns (bytes32) {
-        require(
-            !RiskHelper.isIsolatedSubaccount(txn.order.sender),
-            ERR_UNAUTHORIZED
-        );
-        bytes32 isolatedDigest = getIsolatedDigest(txn.productId, txn.order);
-        require(
-            _checkSignature(
-                txn.order.sender,
-                isolatedDigest,
-                linkedSigner,
-                txn.signature
-            ),
-            ERR_INVALID_SIGNATURE
-        );
-
-        address senderAddress = address(uint160(bytes20(txn.order.sender)));
-        uint256 mask = isolatedSubaccountsMask[senderAddress];
-        bytes32 newIsolatedSubaccount = bytes32(0);
-        for (uint256 id = 0; (1 << id) <= mask; id += 1) {
-            if (mask & (1 << id) != 0) {
-                bytes32 subaccount = isolatedSubaccounts[txn.order.sender][id];
-                if (subaccount != bytes32(0)) {
-                    uint32 productId = RiskHelper.getIsolatedProductId(
-                        subaccount
-                    );
-                    if (productId == txn.productId) {
-                        newIsolatedSubaccount = subaccount;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (newIsolatedSubaccount == bytes32(0)) {
+    // TODO: remove this function after migration
+    function updateMinSizes(
+        uint32[] memory productIds,
+        int128[] memory minSizes
+    ) external onlyOwner {
+        require(productIds.length == minSizes.length, "invalid inputs.");
+        for (uint32 i = 0; i < productIds.length; i++) {
+            uint32 productId = productIds[i];
+            int128 minSize = minSizes[i];
             require(
-                mask != (1 << MAX_ISOLATED_SUBACCOUNTS_PER_ADDRESS) - 1,
-                "Too many isolated subaccounts"
+                marketInfo[productId].minSize != 0,
+                "market doesn't exist."
             );
-            uint8 id = 0;
-            while (mask & 1 != 0) {
-                mask >>= 1;
-                id += 1;
-            }
-
-            // |  address | reserved | productId |   id   |  'iso'  |
-            // | 20 bytes |  6 bytes |  2 bytes  | 1 byte | 3 bytes |
-            newIsolatedSubaccount = bytes32(
-                (uint256(uint160(senderAddress)) << 96) |
-                    (uint256(txn.productId) << 32) |
-                    (uint256(id) << 24) |
-                    6910831
-            );
-            isolatedSubaccountsMask[senderAddress] |= 1 << id;
-            parentSubaccounts[newIsolatedSubaccount] = txn.order.sender;
-            isolatedSubaccounts[txn.order.sender][id] = newIsolatedSubaccount;
+            marketInfo[productId].minSize = int64(minSize / 1e9);
         }
-
-        bytes32 digest = getDigest(
-            txn.productId,
-            IEndpoint.Order({
-                sender: txn.order.sender,
-                priceX18: txn.order.priceX18,
-                amount: txn.order.amount,
-                expiration: txn.order.expiration,
-                nonce: txn.order.nonce
-            })
-        );
-        digestToSubaccount[digest] = newIsolatedSubaccount;
-
-        if (txn.order.margin > 0) {
-            digestToMargin[digest] = txn.order.margin;
-            spotEngine.updateBalance(
-                QUOTE_PRODUCT_ID,
-                txn.order.sender,
-                -txn.order.margin
-            );
-            spotEngine.updateBalance(
-                QUOTE_PRODUCT_ID,
-                newIsolatedSubaccount,
-                txn.order.margin
-            );
-        }
-
-        return newIsolatedSubaccount;
-    }
-
-    function getIsolatedSubaccounts(bytes32 subaccount)
-        external
-        view
-        returns (bytes32[] memory)
-    {
-        uint256 nIsolatedSubaccounts = 0;
-        for (uint256 id = 0; id < MAX_ISOLATED_SUBACCOUNTS_PER_ADDRESS; id++) {
-            bytes32 isolatedSubaccount = isolatedSubaccounts[subaccount][id];
-            if (isolatedSubaccount != bytes32(0)) {
-                nIsolatedSubaccounts += 1;
-            }
-        }
-        bytes32[] memory isolatedsubaccountsResponse = new bytes32[](
-            nIsolatedSubaccounts
-        );
-        for (uint256 id = 0; id < MAX_ISOLATED_SUBACCOUNTS_PER_ADDRESS; id++) {
-            bytes32 isolatedSubaccount = isolatedSubaccounts[subaccount][id];
-            if (isolatedSubaccount != bytes32(0)) {
-                isolatedsubaccountsResponse[
-                    --nIsolatedSubaccounts
-                ] = isolatedSubaccount;
-            }
-        }
-        return isolatedsubaccountsResponse;
-    }
-
-    function isIsolatedSubaccountActive(bytes32 parent, bytes32 subaccount)
-        external
-        view
-        returns (bool)
-    {
-        for (uint256 id = 0; id < MAX_ISOLATED_SUBACCOUNTS_PER_ADDRESS; id++) {
-            if (subaccount == isolatedSubaccounts[parent][id]) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    function getParentSubaccount(bytes32 subaccount)
-        external
-        view
-        returns (bytes32)
-    {
-        return parentSubaccounts[subaccount];
     }
 }

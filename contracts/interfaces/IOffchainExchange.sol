@@ -2,8 +2,9 @@
 pragma solidity ^0.8.0;
 
 import "./clearinghouse/IClearinghouse.sol";
+import "./IVersion.sol";
 
-interface IOffchainExchange {
+interface IOffchainExchange is IVersion {
     event FillOrder(
         uint32 indexed productId,
         // original order information
@@ -23,11 +24,6 @@ interface IOffchainExchange {
         int128 quoteDelta
     );
 
-    event CloseIsolatedSubaccount(
-        bytes32 indexed isolatedSubaccount,
-        bytes32 indexed parentSubaccount
-    );
-
     struct FeeRates {
         int64 makerRateX18;
         int64 takerRateX18;
@@ -45,7 +41,6 @@ interface IOffchainExchange {
     }
 
     struct MarketInfo {
-        uint32 quoteId;
         int128 minSize;
         int128 sizeIncrement;
         int128 collectedFees;
@@ -62,7 +57,6 @@ interface IOffchainExchange {
 
     function updateMarket(
         uint32 productId,
-        uint32 quoteId,
         address virtualBook,
         int128 sizeIncrement,
         int128 minSize,
@@ -98,21 +92,4 @@ interface IOffchainExchange {
     function matchOrders(IEndpoint.MatchOrdersWithSigner calldata tx) external;
 
     function dumpFees() external;
-
-    function createIsolatedSubaccount(
-        IEndpoint.CreateIsolatedSubaccount memory tx,
-        address linkedSigner
-    ) external returns (bytes32);
-
-    function isIsolatedSubaccountActive(bytes32 parent, bytes32 subaccount)
-        external
-        view
-        returns (bool);
-
-    function getParentSubaccount(bytes32 subaccount)
-        external
-        view
-        returns (bytes32);
-
-    function tryCloseIsolatedSubaccount(bytes32 subaccount) external;
 }

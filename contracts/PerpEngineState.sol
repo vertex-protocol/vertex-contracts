@@ -176,13 +176,6 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
                 int128 paymentAmount = priceDiffX18.mul(dtX18).div(ONE_DAY_X18);
                 state.cumulativeFundingLongX18 += paymentAmount;
                 state.cumulativeFundingShortX18 += paymentAmount;
-
-                emit FundingPayment(
-                    productId,
-                    dt,
-                    state.openInterest,
-                    paymentAmount
-                );
             }
 
             {
@@ -203,6 +196,21 @@ abstract contract PerpEngineState is IPerpEngine, BaseEngine {
             lpStates[productId] = lpState;
             states[productId] = state;
             _productUpdate(productId);
+        }
+    }
+
+    function getProductIds(uint32 isoGroup)
+        public
+        view
+        override(BaseEngine, IProductEngine)
+        returns (uint32[] memory)
+    {
+        if (isoGroup == 0) {
+            return getCrossProductIds();
+        } else {
+            uint32[] memory productIds = new uint32[](1);
+            productIds[0] = isoGroup;
+            return productIds;
         }
     }
 }

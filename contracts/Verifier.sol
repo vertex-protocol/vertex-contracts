@@ -3,21 +3,21 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol";
-import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import "./common/Errors.sol";
+import "./Version.sol";
 import "./libraries/MathHelper.sol";
 import "./interfaces/IVerifier.sol";
 
-contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
+contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier, Version {
     Point[8] internal pubkeys;
     Point[256] internal aggregatePubkey;
     bool[256] internal isAggregatePubkeyLatest;
     uint256 internal nSigner;
 
-    /// @custom:oz-upgrades-unsafe-allow constructor
+    /*
     constructor() {
         _disableInitializers();
     }
+    */
 
     function initialize(Point[8] memory initialSet) external initializer {
         __Ownable_init();
@@ -73,11 +73,6 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         return pubkeys[index];
     }
 
-    function getPubkeyAddress(uint8 index) public view returns (address) {
-        Point memory p = getPubkey(index);
-        return address(uint160(uint256(keccak256(abi.encode(p.x, p.y)))));
-    }
-
     function getAggregatePubkey(uint8 signerBitmask)
         internal
         returns (Point memory)
@@ -131,8 +126,7 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
                 message,
                 e,
                 s
-            ),
-            "Verification failed"
+            )
         );
     }
 
@@ -168,7 +162,6 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
 
     uint256 public constant _P =
         0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F;
-
     struct Point {
         uint256 x;
         uint256 y;
@@ -222,59 +215,5 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         y3 = mulmod(y3, lam, _P);
         y3 = addmod(y3, _P - u.y, _P);
         return Point(x3, y3);
-    }
-
-    function checkIndividualSignature(
-        bytes32 digest,
-        bytes memory signature,
-        uint8 signerIndex
-    ) public view returns (bool) {
-        address expectedAddress = getPubkeyAddress(signerIndex);
-        address recovered = ECDSA.recover(digest, signature);
-        return expectedAddress == recovered;
-    }
-
-    function requireValidTxSignatures(
-        bytes calldata txn,
-        uint64 idx,
-        bytes[] calldata signatures
-    ) public {
-        bytes32 data = keccak256(
-            abi.encodePacked(uint256(block.chainid), uint256(idx), txn)
-        );
-        bytes32 hashedMsg = keccak256(
-            abi.encodePacked("\x19Ethereum Signed Message:\n32", data)
-        );
-
-        uint256 nSignatures = 0;
-        for (uint256 i = 0; i < signatures.length; i++) {
-            if (signatures[i].length > 0) {
-                nSignatures += 1;
-                require(
-                    checkIndividualSignature(
-                        hashedMsg,
-                        signatures[i],
-                        uint8(i)
-                    ),
-                    "invalid signature"
-                );
-            }
-        }
-        require(nSignatures == nSigner, "not enough signatures");
-    }
-
-    function validateSignature(
-        bytes32 sender,
-        address linkedSigner,
-        bytes32 digest,
-        bytes memory signature
-    ) public pure {
-        address recovered = ECDSA.recover(digest, signature);
-        require(
-            (recovered != address(0)) &&
-                ((recovered == address(uint160(bytes20(sender)))) ||
-                    (recovered == linkedSigner)),
-            ERR_INVALID_SIGNATURE
-        );
     }
 }

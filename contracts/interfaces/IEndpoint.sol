@@ -2,8 +2,9 @@
 pragma solidity ^0.8.0;
 
 import "./clearinghouse/IClearinghouse.sol";
+import "./IVersion.sol";
 
-interface IEndpoint {
+interface IEndpoint is IVersion {
     event SubmitTransactions();
 
     // events that we parse transactions into
@@ -21,7 +22,7 @@ interface IEndpoint {
         BurnLp,
         SwapAMM,
         MatchOrderAMM,
-        DumpFees,
+        DumpFees, // deprecated
         ClaimSequencerFees,
         PerpTick,
         ManualAssert,
@@ -29,15 +30,10 @@ interface IEndpoint {
         UpdateProduct,
         LinkSigner,
         UpdateFeeRates,
-        BurnLpAndTransfer,
+        BurnLpAndTransfer, // deprecated
         MatchOrdersRFQ,
         TransferQuote,
-        RebalanceXWithdraw,
-        UpdateMinDepositRate,
-        AssertCode,
-        WithdrawInsurance,
-        CreateIsolatedSubaccount,
-        DelistProduct
+        RebalanceXWithdraw
     }
 
     struct UpdateProduct {
@@ -162,22 +158,6 @@ interface IEndpoint {
         int128[] totalBorrows;
     }
 
-    struct AssertCode {
-        string[] contractNames;
-        bytes32[] codeHashes;
-    }
-
-    struct WithdrawInsurance {
-        uint128 amount;
-        address sendTo;
-    }
-
-    struct DelistProduct {
-        uint32 productId;
-        int128 priceX18;
-        bytes32[] subaccounts;
-    }
-
     struct Rebate {
         bytes32[] subaccounts;
         int128[] amounts;
@@ -201,11 +181,6 @@ interface IEndpoint {
         uint32 productId;
         uint128 amount;
         address sendTo;
-    }
-
-    struct UpdateMinDepositRate {
-        uint32 productId;
-        int128 minDepositRateX18;
     }
 
     struct UpdatePrice {
@@ -304,21 +279,6 @@ interface IEndpoint {
 
     struct SignedTransferQuote {
         TransferQuote tx;
-        bytes signature;
-    }
-
-    struct IsolatedOrder {
-        bytes32 sender;
-        int128 priceX18;
-        int128 amount;
-        uint64 expiration;
-        uint64 nonce;
-        int128 margin;
-    }
-
-    struct CreateIsolatedSubaccount {
-        IsolatedOrder order;
-        uint32 productId;
         bytes signature;
     }
 
