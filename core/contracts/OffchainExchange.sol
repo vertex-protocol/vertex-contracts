@@ -938,7 +938,11 @@ contract OffchainExchange is
             // use the default fee rates.
             if (block.chainid == 80094 || block.chainid == 80084) {
                 // defaults for Berachain maker: 2bps / taker: 5bps
-                userFeeRates = FeeRates(200_000_000_000_000, 500_000_000_000_000, 1);
+                userFeeRates = FeeRates(
+                    200_000_000_000_000,
+                    500_000_000_000_000,
+                    1
+                );
             } else {
                 userFeeRates = FeeRates(0, 200_000_000_000_000, 1);
             }
@@ -958,7 +962,11 @@ contract OffchainExchange is
             // use the default fee rates.
             if (block.chainid == 80094 || block.chainid == 80084) {
                 // defaults for Berachain maker: 2bps / taker: 5bps
-                userFeeRates = FeeRates(200_000_000_000_000, 500_000_000_000_000, 1);
+                userFeeRates = FeeRates(
+                    200_000_000_000_000,
+                    500_000_000_000_000,
+                    1
+                );
             } else {
                 userFeeRates = FeeRates(0, 200_000_000_000_000, 1);
             }
