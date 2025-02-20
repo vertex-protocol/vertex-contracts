@@ -414,14 +414,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
             : IProductEngine.HealthType.INITIAL;
 
         require(getHealth(sender, healthType) >= 0, ERR_SUBACCT_HEALTH);
-        // TODO: remove this when we support wS spot.
-        if (productId == 145) {
-            ISpotEngine.Balance memory balance = spotEngine.getBalance(
-                productId,
-                sender
-            );
-            require(balance.amount >= 0, ERR_SUBACCT_HEALTH);
-        }
         emit ModifyCollateral(amountRealized, sender, productId);
     }
 
@@ -432,8 +424,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     {
         require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         require(txn.productId != QUOTE_PRODUCT_ID);
-        // TODO: remove this when we support wS spot.
-        require(txn.productId != 145, ERR_INVALID_PRODUCT);
         productToEngine[txn.productId].mintLp(
             txn.productId,
             txn.sender,
