@@ -285,10 +285,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         string memory referralCode
     ) public {
         require(bytes(referralCode).length != 0);
-        require(
-            !RiskHelper.isIsolatedSubaccount(subaccount) && productId != 145,
-            ERR_UNAUTHORIZED
-        );
+        require(!RiskHelper.isIsolatedSubaccount(subaccount), ERR_UNAUTHORIZED);
 
         address sender = address(bytes20(subaccount));
 
