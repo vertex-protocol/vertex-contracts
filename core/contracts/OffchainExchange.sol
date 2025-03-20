@@ -888,16 +888,13 @@ contract OffchainExchange is
         for (uint32 i = 1; i < productIds.length; i++) {
             uint32 productId = productIds[i];
             MarketInfoStore memory market = marketInfo[productId];
-
-            // its possible for fees to be <= 0 if there is a cross-chain trade
-            // and the maker rebate is exclusively coming from one chain
-            if (market.collectedFees <= 0) {
+            if (market.collectedFees == 0) {
                 continue;
             }
 
             spotEngine.updateBalance(
                 quoteIds[productId],
-                FEES_ACCOUNT,
+                X_ACCOUNT,
                 market.collectedFees
             );
 
@@ -916,7 +913,7 @@ contract OffchainExchange is
 
             perpEngine.updateBalance(
                 productId,
-                FEES_ACCOUNT,
+                X_ACCOUNT,
                 0,
                 market.collectedFees
             );
@@ -979,7 +976,8 @@ contract OffchainExchange is
         uint32 productId,
         int64 makerRateX18,
         int64 takerRateX18
-    ) external onlyEndpoint {
+    ) external {
+        require(msg.sender == address(clearinghouse), ERR_UNAUTHORIZED);
         if (!addressTouched[user]) {
             addressTouched[user] = true;
             customFeeAddresses.push(user);

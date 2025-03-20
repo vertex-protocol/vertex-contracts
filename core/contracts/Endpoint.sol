@@ -79,19 +79,14 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
         "MintLp(bytes32 sender,uint32 productId,uint128 amountBase,uint128 quoteAmountLow,uint128 quoteAmountHigh,uint64 nonce)";
     string internal constant BURN_LP_SIGNATURE =
         "BurnLp(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
+    string internal constant MINT_VLP_SIGNATURE =
+        "MintVlp(bytes32 sender,uint128 quoteAmount,uint64 nonce)";
+    string internal constant BURN_VLP_SIGNATURE =
+        "BurnVlp(bytes32 sender,uint128 vlpAmount,uint64 nonce)";
     string internal constant LINK_SIGNER_SIGNATURE =
         "LinkSigner(bytes32 sender,bytes32 signer,uint64 nonce)";
 
     IVerifier private verifier;
-
-    function _updatePrice(uint32 productId, int128 _priceX18) internal {
-        require(_priceX18 > 0, ERR_INVALID_PRICE);
-        address engine = clearinghouse.getEngineByProduct(productId);
-        if (engine != address(0)) {
-            priceX18[productId] = _priceX18;
-            IProductEngine(engine).updatePrice(productId, _priceX18);
-        }
-    }
 
     function initialize(
         address _sanctions,
@@ -365,6 +360,10 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             require(sender == owner());
         } else if (txType == TransactionType.DelistProduct) {
             require(sender == owner());
+        } else if (txType == TransactionType.DumpFees) {
+            require(sender == owner());
+        } else if (txType == TransactionType.RebalanceXWithdraw) {
+            require(sender == owner());
         } else {
             chargeSlowModeFee(_getQuote(), sender);
             slowModeFees += SLOW_MODE_FEE;
@@ -441,15 +440,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
     ) public {
         require(msg.sender == address(this));
         TransactionType txType = TransactionType(uint8(transaction[0]));
-        if (txType == TransactionType.LiquidateSubaccount) {
-            LiquidateSubaccount memory txn = abi.decode(
-                transaction[1:],
-                (LiquidateSubaccount)
-            );
-            validateSender(txn.sender, sender);
-            requireSubaccount(txn.sender);
-            clearinghouse.liquidateSubaccount(txn);
-        } else if (txType == TransactionType.DepositCollateral) {
+        if (txType == TransactionType.DepositCollateral) {
             DepositCollateral memory txn = abi.decode(
                 transaction[1:],
                 (DepositCollateral)
@@ -462,7 +453,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 transaction[1:],
                 (WithdrawCollateral)
             );
-
             validateSender(txn.sender, sender);
             clearinghouse.withdrawCollateral(
                 txn.sender,
@@ -471,8 +461,6 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 address(0),
                 nSubmissions
             );
-        } else if (txType == TransactionType.SettlePnl) {
-            clearinghouse.settlePnl(transaction);
         } else if (txType == TransactionType.DepositInsurance) {
             clearinghouse.depositInsurance(transaction);
         } else if (txType == TransactionType.MintLp) {
@@ -518,6 +506,18 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             clearinghouse.withdrawInsurance(transaction, nSubmissions);
         } else if (txType == TransactionType.DelistProduct) {
             clearinghouse.delistProduct(transaction);
+        } else if (txType == TransactionType.DumpFees) {
+            IOffchainExchange(offchainExchange).dumpFees();
+            uint32[] memory spotIds = spotEngine.getProductIds();
+            int128[] memory fees = new int128[](spotIds.length);
+            for (uint256 i = 0; i < spotIds.length; i++) {
+                fees[i] = sequencerFee[spotIds[i]];
+                sequencerFee[spotIds[i]] = 0;
+            }
+            requireSubaccount(X_ACCOUNT);
+            clearinghouse.claimSequencerFees(fees);
+        } else if (txType == TransactionType.RebalanceXWithdraw) {
+            clearinghouse.rebalanceXWithdraw(transaction, nSubmissions);
         } else {
             revert();
         }
@@ -599,8 +599,12 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             t.perpTime = txn.time;
             times = t;
         } else if (txType == TransactionType.UpdatePrice) {
-            UpdatePrice memory txn = abi.decode(transaction[1:], (UpdatePrice));
-            _updatePrice(txn.productId, txn.priceX18);
+            (uint32 productId, int128 newPriceX18) = clearinghouse.updatePrice(
+                transaction
+            );
+            if (productId != 0) {
+                priceX18[productId] = newPriceX18;
+            }
         } else if (txType == TransactionType.SettlePnl) {
             clearinghouse.settlePnl(transaction);
         } else if (
@@ -678,21 +682,52 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             );
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
             clearinghouse.burnLp(signedTx.tx);
-        } else if (txType == TransactionType.DumpFees) {
-            IOffchainExchange(offchainExchange).dumpFees();
-        } else if (txType == TransactionType.ClaimSequencerFees) {
-            ClaimSequencerFees memory txn = abi.decode(
+        } else if (txType == TransactionType.MintVlp) {
+            SignedMintVlp memory signedTx = abi.decode(
                 transaction[1:],
-                (ClaimSequencerFees)
+                (SignedMintVlp)
             );
-            uint32[] memory spotIds = spotEngine.getProductIds();
-            int128[] memory fees = new int128[](spotIds.length);
-            for (uint256 i = 0; i < spotIds.length; i++) {
-                fees[i] = sequencerFee[spotIds[i]];
-                sequencerFee[spotIds[i]] = 0;
-            }
-            requireSubaccount(txn.subaccount);
-            clearinghouse.claimSequencerFees(txn, fees);
+            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
+            validateSignature(
+                signedTx.tx.sender,
+                _hashTypedDataV4(
+                    keccak256(
+                        abi.encode(
+                            keccak256(bytes(MINT_VLP_SIGNATURE)),
+                            signedTx.tx.sender,
+                            signedTx.tx.quoteAmount,
+                            signedTx.tx.nonce
+                        )
+                    )
+                ),
+                signedTx.signature
+            );
+            chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
+            priceX18[VLP_PRODUCT_ID] = signedTx.oraclePriceX18;
+            clearinghouse.mintVlp(signedTx.tx, signedTx.oraclePriceX18);
+        } else if (txType == TransactionType.BurnVlp) {
+            SignedBurnVlp memory signedTx = abi.decode(
+                transaction[1:],
+                (SignedBurnVlp)
+            );
+            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
+            validateSignature(
+                signedTx.tx.sender,
+                _hashTypedDataV4(
+                    keccak256(
+                        abi.encode(
+                            keccak256(bytes(BURN_VLP_SIGNATURE)),
+                            signedTx.tx.sender,
+                            signedTx.tx.vlpAmount,
+                            signedTx.tx.nonce
+                        )
+                    )
+                ),
+                signedTx.signature
+            );
+            chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
+            priceX18[VLP_PRODUCT_ID] = signedTx.oraclePriceX18;
+            clearinghouse.burnVlp(signedTx.tx, signedTx.oraclePriceX18);
         } else if (txType == TransactionType.ManualAssert) {
             clearinghouse.manualAssert(transaction);
         } else if (txType == TransactionType.LinkSigner) {
@@ -719,16 +754,7 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                 uint160(bytes20(signedTx.tx.signer))
             );
         } else if (txType == TransactionType.UpdateFeeRates) {
-            UpdateFeeRates memory txn = abi.decode(
-                transaction[1:],
-                (UpdateFeeRates)
-            );
-            IOffchainExchange(offchainExchange).updateFeeRates(
-                txn.user,
-                txn.productId,
-                txn.makerRateX18,
-                txn.takerRateX18
-            );
+            clearinghouse.updateFeeRates(transaction);
         } else if (txType == TransactionType.TransferQuote) {
             SignedTransferQuote memory signedTx = abi.decode(
                 transaction[1:],
@@ -753,29 +779,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
             validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             chargeFee(signedTx.tx.sender, HEALTHCHECK_FEE);
             clearinghouse.transferQuote(signedTx.tx);
-        } else if (txType == TransactionType.RebalanceXWithdraw) {
-            RebalanceXWithdraw memory txn = abi.decode(
-                transaction[1:],
-                (RebalanceXWithdraw)
-            );
-
-            clearinghouse.withdrawCollateral(
-                X_ACCOUNT,
-                txn.productId,
-                txn.amount,
-                txn.sendTo,
-                nSubmissions
-            );
         } else if (txType == TransactionType.UpdateMinDepositRate) {
-            UpdateMinDepositRate memory txn = abi.decode(
-                transaction[1:],
-                (UpdateMinDepositRate)
-            );
-
-            spotEngine.updateMinDepositRate(
-                txn.productId,
-                txn.minDepositRateX18
-            );
+            clearinghouse.updateMinDepositRate(transaction);
         } else if (txType == TransactionType.AssertCode) {
             clearinghouse.assertCode(transaction);
         } else if (txType == TransactionType.CreateIsolatedSubaccount) {
@@ -789,6 +794,8 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
                     getLinkedSigner(txn.order.sender)
                 );
             _recordSubaccount(newIsolatedSubaccount);
+        } else if (txType == TransactionType.RebalanceVlp) {
+            clearinghouse.rebalanceVlp(transaction);
         } else {
             revert();
         }
@@ -890,9 +897,5 @@ contract Endpoint is IEndpoint, EIP712Upgradeable, OwnableUpgradeable {
 
     function getNonce(address sender) external view returns (uint64) {
         return nonces[sender];
-    }
-
-    function updateSanctions(address _sanctions) external onlyOwner {
-        sanctions = ISanctionsList(_sanctions);
     }
 }

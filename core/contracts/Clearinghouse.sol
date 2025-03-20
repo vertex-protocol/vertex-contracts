@@ -24,29 +24,6 @@ interface IProxyManager {
     function getCodeHash(string memory name) external view returns (bytes32);
 }
 
-enum YieldMode {
-    AUTOMATIC,
-    DISABLED,
-    CLAIMABLE
-}
-
-enum GasMode {
-    VOID,
-    CLAIMABLE
-}
-
-interface IBlastPoints {
-    function configurePointsOperator(address operator) external;
-}
-
-interface IBlast {
-    function configure(
-        YieldMode _yield,
-        GasMode gasMode,
-        address governor
-    ) external;
-}
-
 contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
     using MathSD21x18 for int128;
     using ERC20Helper for IERC20Base;
@@ -369,6 +346,72 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         require(sumBase == 0, ERR_INVALID_HOLDER_LIST);
     }
 
+    function rebalanceXWithdraw(bytes calldata transaction, uint64 nSubmissions)
+        external
+        onlyEndpoint
+    {
+        IEndpoint.RebalanceXWithdraw memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.RebalanceXWithdraw)
+        );
+
+        withdrawCollateral(
+            X_ACCOUNT,
+            txn.productId,
+            txn.amount,
+            txn.sendTo,
+            nSubmissions
+        );
+    }
+
+    function updateMinDepositRate(bytes calldata transaction)
+        external
+        onlyEndpoint
+    {
+        IEndpoint.UpdateMinDepositRate memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.UpdateMinDepositRate)
+        );
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        spotEngine.updateMinDepositRate(txn.productId, txn.minDepositRateX18);
+    }
+
+    function updateFeeRates(bytes calldata transaction) external onlyEndpoint {
+        IEndpoint.UpdateFeeRates memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.UpdateFeeRates)
+        );
+        address offchainExchange = IEndpoint(getEndpoint())
+            .getOffchainExchange();
+        IOffchainExchange(offchainExchange).updateFeeRates(
+            txn.user,
+            txn.productId,
+            txn.makerRateX18,
+            txn.takerRateX18
+        );
+    }
+
+    function updatePrice(bytes calldata transaction)
+        external
+        onlyEndpoint
+        returns (uint32, int128)
+    {
+        IEndpoint.UpdatePrice memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.UpdatePrice)
+        );
+        require(txn.priceX18 > 0, ERR_INVALID_PRICE);
+        IProductEngine engine = productToEngine[txn.productId];
+        if (address(engine) != address(0)) {
+            engine.updatePrice(txn.productId, txn.priceX18);
+            return (txn.productId, txn.priceX18);
+        } else {
+            return (0, 0);
+        }
+    }
+
     function handleWithdrawTransfer(
         IERC20Base token,
         address to,
@@ -389,7 +432,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         uint128 amount,
         address sendTo,
         uint64 idx
-    ) external virtual onlyEndpoint {
+    ) public virtual onlyEndpoint {
         require(!RiskHelper.isIsolatedSubaccount(sender), ERR_UNAUTHORIZED);
         require(amount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
         ISpotEngine spotEngine = ISpotEngine(
@@ -447,6 +490,70 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         );
     }
 
+    function mintVlp(IEndpoint.MintVlp calldata txn, int128 oraclePriceX18)
+        external
+        onlyEndpoint
+    {
+        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        spotEngine.updatePrice(VLP_PRODUCT_ID, oraclePriceX18);
+        require(txn.quoteAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
+
+        int128 quoteAmount = int128(txn.quoteAmount);
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, -quoteAmount);
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, V_ACCOUNT, quoteAmount);
+
+        int128 vlpAmount = quoteAmount.div(oraclePriceX18);
+        spotEngine.updateBalance(VLP_PRODUCT_ID, txn.sender, vlpAmount);
+        spotEngine.updateBalance(VLP_PRODUCT_ID, V_ACCOUNT, -vlpAmount);
+
+        require(
+            getHealth(txn.sender, IProductEngine.HealthType.INITIAL) >= 0,
+            ERR_SUBACCT_HEALTH
+        );
+    }
+
+    function burnVlp(IEndpoint.BurnVlp calldata txn, int128 oraclePriceX18)
+        external
+        onlyEndpoint
+    {
+        require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        spotEngine.updatePrice(VLP_PRODUCT_ID, oraclePriceX18);
+        require(txn.vlpAmount <= INT128_MAX, ERR_CONVERSION_OVERFLOW);
+
+        int128 vlpAmount = int128(txn.vlpAmount);
+        spotEngine.updateBalance(VLP_PRODUCT_ID, txn.sender, -vlpAmount);
+        spotEngine.updateBalance(VLP_PRODUCT_ID, V_ACCOUNT, vlpAmount);
+
+        int128 quoteAmount = vlpAmount.mul(oraclePriceX18);
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, quoteAmount);
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, V_ACCOUNT, -quoteAmount);
+
+        require(
+            spotEngine.getBalance(VLP_PRODUCT_ID, txn.sender).amount >= 0,
+            ERR_SUBACCT_HEALTH
+        );
+    }
+
+    function rebalanceVlp(bytes calldata transaction) external onlyEndpoint {
+        IEndpoint.RebalanceVlp memory txn = abi.decode(
+            transaction[1:],
+            (IEndpoint.RebalanceVlp)
+        );
+        ISpotEngine spotEngine = ISpotEngine(
+            address(engineByType[IProductEngine.EngineType.SPOT])
+        );
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, V_ACCOUNT, txn.quoteAmount);
+        spotEngine.updateBalance(QUOTE_PRODUCT_ID, X_ACCOUNT, -txn.quoteAmount);
+        spotEngine.updateBalance(VLP_PRODUCT_ID, V_ACCOUNT, txn.vlpAmount);
+        spotEngine.updateBalance(VLP_PRODUCT_ID, X_ACCOUNT, -txn.vlpAmount);
+    }
+
     function burnLpAndTransfer(IEndpoint.BurnLpAndTransfer calldata txn)
         external
         virtual
@@ -473,18 +580,14 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         require(_isAboveInitial(txn.sender), ERR_SUBACCT_HEALTH);
     }
 
-    function claimSequencerFees(
-        IEndpoint.ClaimSequencerFees calldata txn,
-        int128[] calldata fees
-    ) external virtual onlyEndpoint {
-        require(
-            !RiskHelper.isIsolatedSubaccount(txn.subaccount),
-            ERR_UNAUTHORIZED
-        );
+    function claimSequencerFees(int128[] calldata fees)
+        external
+        virtual
+        onlyEndpoint
+    {
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
-
         IPerpEngine perpEngine = IPerpEngine(
             address(engineByType[IProductEngine.EngineType.PERP])
         );
@@ -497,13 +600,11 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
                 spotIds[i],
                 FEES_ACCOUNT
             );
-
             spotEngine.updateBalance(
                 spotIds[i],
-                txn.subaccount,
+                X_ACCOUNT,
                 fees[i] + feeBalance.amount
             );
-
             spotEngine.updateBalance(
                 spotIds[i],
                 FEES_ACCOUNT,
@@ -516,14 +617,12 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
                 perpIds[i],
                 FEES_ACCOUNT
             );
-
             perpEngine.updateBalance(
                 perpIds[i],
-                txn.subaccount,
+                X_ACCOUNT,
                 feeBalance.amount,
                 feeBalance.vQuoteBalance
             );
-
             perpEngine.updateBalance(
                 perpIds[i],
                 FEES_ACCOUNT,
@@ -615,15 +714,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
 
     function getSpreads() external view returns (uint256) {
         return spreads;
-    }
-
-    function configurePoints(
-        address blastPoints,
-        address blast,
-        address gov
-    ) external onlyOwner {
-        IBlastPoints(blastPoints).configurePointsOperator(gov);
-        IBlast(blast).configure(YieldMode.CLAIMABLE, GasMode.CLAIMABLE, gov);
     }
 
     function requireMinDeposit(uint32 productId, uint128 amount) external {
