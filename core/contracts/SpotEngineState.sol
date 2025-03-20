@@ -397,6 +397,9 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
         require(dt < 7 * SECONDS_PER_DAY, ERR_INVALID_TIME);
         for (uint32 i = 0; i < productIds.length; i++) {
             uint32 productId = productIds[i];
+            if (productId == VLP_PRODUCT_ID) {
+                continue;
+            }
             State memory state = states[productId];
             if (productId == QUOTE_PRODUCT_ID) {
                 quoteState = state;
@@ -416,8 +419,8 @@ abstract contract SpotEngineState is ISpotEngine, BaseEngine {
 
     function updateMinDepositRate(uint32 productId, int128 minDepositRateX18)
         external
-        onlyEndpoint
     {
+        require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
         // deposit rate can't be larger than 100% so that when the rate is incorrectly
         // set, we still can rescue it without having too much damage.
         require(

@@ -22,7 +22,7 @@ interface IEndpoint {
         SwapAMM,
         MatchOrderAMM,
         DumpFees,
-        ClaimSequencerFees,
+        ClaimSequencerFees, // deprecated
         PerpTick,
         ManualAssert,
         Rebate, // deprecated
@@ -37,7 +37,10 @@ interface IEndpoint {
         AssertCode,
         WithdrawInsurance,
         CreateIsolatedSubaccount,
-        DelistProduct
+        DelistProduct,
+        MintVlp,
+        BurnVlp,
+        RebalanceVlp
     }
 
     struct UpdateProduct {
@@ -127,6 +130,35 @@ interface IEndpoint {
     struct SignedBurnLp {
         BurnLp tx;
         bytes signature;
+    }
+
+    struct MintVlp {
+        bytes32 sender;
+        uint128 quoteAmount;
+        uint64 nonce;
+    }
+
+    struct SignedMintVlp {
+        MintVlp tx;
+        bytes signature;
+        int128 oraclePriceX18;
+    }
+
+    struct BurnVlp {
+        bytes32 sender;
+        uint128 vlpAmount;
+        uint64 nonce;
+    }
+
+    struct SignedBurnVlp {
+        BurnVlp tx;
+        bytes signature;
+        int128 oraclePriceX18;
+    }
+
+    struct RebalanceVlp {
+        int128 quoteAmount;
+        int128 vlpAmount;
     }
 
     struct LinkSigner {

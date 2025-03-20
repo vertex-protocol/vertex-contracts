@@ -253,10 +253,8 @@ abstract contract BaseEngine is IProductEngine, EndpointGated {
             IOffchainExchange(IEndpoint(getEndpoint()).getOffchainExchange());
     }
 
-    function updatePrice(uint32 productId, int128 priceX18)
-        external
-        onlyEndpoint
-    {
+    function updatePrice(uint32 productId, int128 priceX18) external {
+        require(msg.sender == address(_clearinghouse), ERR_UNAUTHORIZED);
         _risk().value[productId].priceX18 = priceX18;
     }
 

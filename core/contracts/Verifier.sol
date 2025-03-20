@@ -238,7 +238,7 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
         bytes calldata txn,
         uint64 idx,
         bytes[] calldata signatures
-    ) public {
+    ) public view {
         bytes32 data = keccak256(
             abi.encodePacked(uint256(block.chainid), uint256(idx), txn)
         );
