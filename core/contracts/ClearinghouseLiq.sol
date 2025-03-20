@@ -715,7 +715,10 @@ contract ClearinghouseLiq is
         require(!RiskHelper.isIsolatedSubaccount(txn.sender), ERR_UNAUTHORIZED);
         require(txn.sender != txn.liquidatee, ERR_UNAUTHORIZED);
         require(isUnderMaintenance(txn.liquidatee), ERR_NOT_LIQUIDATABLE);
-        require(txn.liquidatee != X_ACCOUNT, ERR_NOT_LIQUIDATABLE);
+        require(
+            txn.liquidatee != X_ACCOUNT && txn.liquidatee != V_ACCOUNT,
+            ERR_NOT_LIQUIDATABLE
+        );
         require(
             txn.productId != QUOTE_PRODUCT_ID,
             ERR_INVALID_LIQUIDATION_PARAMS

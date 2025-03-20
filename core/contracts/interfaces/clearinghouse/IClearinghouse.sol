@@ -33,6 +33,12 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
 
     function burnLp(IEndpoint.BurnLp calldata tx) external;
 
+    function mintVlp(IEndpoint.MintVlp calldata txn, int128 oraclePriceX18)
+        external;
+
+    function burnVlp(IEndpoint.BurnVlp calldata txn, int128 oraclePriceX18)
+        external;
+
     function liquidateSubaccount(IEndpoint.LiquidateSubaccount calldata tx)
         external;
 
@@ -44,10 +50,20 @@ interface IClearinghouse is IClearinghouseEventEmitter, IEndpointGated {
 
     function settlePnl(bytes calldata transaction) external;
 
-    function claimSequencerFees(
-        IEndpoint.ClaimSequencerFees calldata tx,
-        int128[] calldata fees
-    ) external;
+    function rebalanceXWithdraw(bytes calldata transaction, uint64 nSubmissions)
+        external;
+
+    function updateMinDepositRate(bytes calldata transaction) external;
+
+    function updateFeeRates(bytes calldata transaction) external;
+
+    function updatePrice(bytes calldata transaction)
+        external
+        returns (uint32, int128);
+
+    function rebalanceVlp(bytes calldata transaction) external;
+
+    function claimSequencerFees(int128[] calldata fees) external;
 
     /// @notice Retrieve quote ERC20 address
     function getQuote() external view returns (address);
