@@ -531,8 +531,13 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         spotEngine.updateBalance(VLP_PRODUCT_ID, V_ACCOUNT, vlpAmount);
 
         int128 quoteAmount = vlpAmount.mul(oraclePriceX18);
-        spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, quoteAmount);
-        spotEngine.updateBalance(QUOTE_PRODUCT_ID, V_ACCOUNT, -quoteAmount);
+        int128 burnFee = MathHelper.max(ONE, quoteAmount / 1000);
+        quoteAmount = MathHelper.max(0, quoteAmount - burnFee);
+
+        if (quoteAmount != 0) {
+            spotEngine.updateBalance(QUOTE_PRODUCT_ID, txn.sender, quoteAmount);
+            spotEngine.updateBalance(QUOTE_PRODUCT_ID, V_ACCOUNT, -quoteAmount);
+        }
 
         require(
             spotEngine.getBalance(VLP_PRODUCT_ID, txn.sender).amount >= 0,
