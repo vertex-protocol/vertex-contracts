@@ -7,12 +7,30 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "./common/Errors.sol";
 import "./libraries/MathHelper.sol";
 import "./interfaces/IVerifier.sol";
+import "./interfaces/IEndpoint.sol";
 
 contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
     Point[8] internal pubkeys;
     Point[256] internal aggregatePubkey;
     bool[256] internal isAggregatePubkeyLatest;
     uint256 internal nSigner;
+
+    string internal constant LIQUIDATE_SUBACCOUNT_SIGNATURE =
+        "LiquidateSubaccount(bytes32 sender,bytes32 liquidatee,uint32 productId,bool isEncodedSpread,int128 amount,uint64 nonce)";
+    string internal constant TRANSFER_QUOTE_SIGNATURE =
+        "TransferQuote(bytes32 sender,bytes32 recipient,uint128 amount,uint64 nonce)";
+    string internal constant WITHDRAW_COLLATERAL_SIGNATURE =
+        "WithdrawCollateral(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
+    string internal constant MINT_LP_SIGNATURE =
+        "MintLp(bytes32 sender,uint32 productId,uint128 amountBase,uint128 quoteAmountLow,uint128 quoteAmountHigh,uint64 nonce)";
+    string internal constant BURN_LP_SIGNATURE =
+        "BurnLp(bytes32 sender,uint32 productId,uint128 amount,uint64 nonce)";
+    string internal constant MINT_VLP_SIGNATURE =
+        "MintVlp(bytes32 sender,uint128 quoteAmount,uint64 nonce)";
+    string internal constant BURN_VLP_SIGNATURE =
+        "BurnVlp(bytes32 sender,uint128 vlpAmount,uint64 nonce)";
+    string internal constant LINK_SIGNER_SIGNATURE =
+        "LinkSigner(bytes32 sender,bytes32 signer,uint64 nonce)";
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -276,5 +294,131 @@ contract Verifier is EIP712Upgradeable, OwnableUpgradeable, IVerifier {
                     (recovered == linkedSigner)),
             ERR_INVALID_SIGNATURE
         );
+    }
+
+    function computeDigest(
+        IEndpoint.TransactionType txType,
+        bytes calldata transactionBody
+    ) public pure returns (bytes32) {
+        bytes32 digest;
+
+        if (txType == IEndpoint.TransactionType.LiquidateSubaccount) {
+            IEndpoint.SignedLiquidateSubaccount memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedLiquidateSubaccount)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(LIQUIDATE_SUBACCOUNT_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.liquidatee,
+                    signedTx.tx.productId,
+                    signedTx.tx.isEncodedSpread,
+                    signedTx.tx.amount,
+                    signedTx.tx.nonce
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.WithdrawCollateral) {
+            IEndpoint.SignedWithdrawCollateral memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedWithdrawCollateral)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(WITHDRAW_COLLATERAL_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.productId,
+                    signedTx.tx.amount,
+                    signedTx.tx.nonce
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.MintLp) {
+            IEndpoint.SignedMintLp memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedMintLp)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(MINT_LP_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.productId,
+                    signedTx.tx.amountBase,
+                    signedTx.tx.quoteAmountLow,
+                    signedTx.tx.quoteAmountHigh,
+                    signedTx.tx.nonce
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.BurnLp) {
+            IEndpoint.SignedBurnLp memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedBurnLp)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(BURN_LP_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.productId,
+                    signedTx.tx.amount,
+                    signedTx.tx.nonce
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.MintVlp) {
+            IEndpoint.SignedMintVlp memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedMintVlp)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(MINT_VLP_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.quoteAmount,
+                    signedTx.tx.nonce
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.BurnVlp) {
+            IEndpoint.SignedBurnVlp memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedBurnVlp)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(BURN_VLP_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.vlpAmount,
+                    signedTx.tx.nonce
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.LinkSigner) {
+            IEndpoint.SignedLinkSigner memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedLinkSigner)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(LINK_SIGNER_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.signer,
+                    signedTx.tx.nonce
+                )
+            );
+        } else if (txType == IEndpoint.TransactionType.TransferQuote) {
+            IEndpoint.SignedTransferQuote memory signedTx = abi.decode(
+                transactionBody,
+                (IEndpoint.SignedTransferQuote)
+            );
+            digest = keccak256(
+                abi.encode(
+                    keccak256(bytes(TRANSFER_QUOTE_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.recipient,
+                    signedTx.tx.amount,
+                    signedTx.tx.nonce
+                )
+            );
+        } else {
+            revert();
+        }
+
+        return digest;
     }
 }

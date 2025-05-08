@@ -16,7 +16,7 @@ import "./interfaces/engine/IPerpEngine.sol";
 import "./EndpointGated.sol";
 import "./interfaces/IEndpoint.sol";
 import "./ClearinghouseStorage.sol";
-import "./WithdrawPool.sol";
+import "./BaseWithdrawPool.sol";
 
 interface IProxyManager {
     function getProxyManagerHelper() external view returns (address);
@@ -92,6 +92,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         if (health == (type(int128).min)) {
             return health;
         }
+        health += perpEngine.getHealthContribution(subaccount, healthType);
 
         uint256 _spreads = spreads;
         while (_spreads != 0) {
@@ -143,8 +144,6 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
                 .mul(spotCoreRisk.price + perpCoreRisk.price)
                 .mul(spreadPenalty - existingPenalty);
         }
-
-        health += perpEngine.getHealthContribution(subaccount, healthType);
     }
 
     function registerProduct(uint32 productId) external {
@@ -419,7 +418,7 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         uint64 idx
     ) internal virtual {
         token.safeTransfer(withdrawPool, uint256(amount));
-        WithdrawPool(withdrawPool).submitWithdrawal(token, to, amount, idx);
+        BaseWithdrawPool(withdrawPool).submitWithdrawal(token, to, amount, idx);
     }
 
     function _balanceOf(address token) internal view virtual returns (uint128) {
@@ -553,10 +552,36 @@ contract Clearinghouse is EndpointGated, ClearinghouseStorage, IClearinghouse {
         ISpotEngine spotEngine = ISpotEngine(
             address(engineByType[IProductEngine.EngineType.SPOT])
         );
-        spotEngine.updateBalance(QUOTE_PRODUCT_ID, V_ACCOUNT, txn.quoteAmount);
-        spotEngine.updateBalance(QUOTE_PRODUCT_ID, X_ACCOUNT, -txn.quoteAmount);
-        spotEngine.updateBalance(VLP_PRODUCT_ID, V_ACCOUNT, txn.vlpAmount);
-        spotEngine.updateBalance(VLP_PRODUCT_ID, X_ACCOUNT, -txn.vlpAmount);
+        IPerpEngine perpEngine = IPerpEngine(
+            address(engineByType[IProductEngine.EngineType.PERP])
+        );
+        if (address(spotEngine) == address(productToEngine[txn.productId])) {
+            spotEngine.updateBalance(
+                txn.productId,
+                V_ACCOUNT,
+                txn.baseAmount,
+                txn.quoteAmount
+            );
+            spotEngine.updateBalance(
+                txn.productId,
+                X_ACCOUNT,
+                -txn.baseAmount,
+                -txn.quoteAmount
+            );
+        } else {
+            perpEngine.updateBalance(
+                txn.productId,
+                V_ACCOUNT,
+                txn.baseAmount,
+                txn.quoteAmount
+            );
+            perpEngine.updateBalance(
+                txn.productId,
+                X_ACCOUNT,
+                -txn.baseAmount,
+                -txn.quoteAmount
+            );
+        }
     }
 
     function burnLpAndTransfer(IEndpoint.BurnLpAndTransfer calldata txn)

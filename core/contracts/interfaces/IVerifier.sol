@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.0;
+import "./IEndpoint.sol";
 
 interface IVerifier {
     function requireValidSignature(
@@ -17,4 +18,9 @@ interface IVerifier {
         bytes32 digest,
         bytes memory signature
     ) external pure;
+
+    function computeDigest(
+        IEndpoint.TransactionType txType,
+        bytes calldata transactionBody
+    ) external view returns (bytes32);
 }
