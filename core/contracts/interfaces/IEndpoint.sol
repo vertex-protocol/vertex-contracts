@@ -157,8 +157,9 @@ interface IEndpoint {
     }
 
     struct RebalanceVlp {
+        uint32 productId;
+        int128 baseAmount;
         int128 quoteAmount;
-        int128 vlpAmount;
     }
 
     struct LinkSigner {
