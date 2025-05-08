@@ -679,7 +679,10 @@ contract ClearinghouseLiq is
 
         // it's ok to let initial health become 0
         require(!isAboveInitial(txn.liquidatee), ERR_LIQUIDATED_TOO_MUCH);
-        require(!isUnderInitial(txn.sender), ERR_SUBACCT_HEALTH);
+        require(
+            txn.sender == V_ACCOUNT || !isUnderInitial(txn.sender),
+            ERR_SUBACCT_HEALTH
+        );
 
         insurance += v.liquidationFees;
 

@@ -928,22 +928,7 @@ contract OffchainExchange is
         uint32 productId,
         bool taker
     ) public view returns (int128) {
-        FeeRates memory userFeeRates = feeRates[
-            address(uint160(bytes20(subaccount)))
-        ][productId];
-        if (userFeeRates.isNonDefault == 0) {
-            // use the default fee rates.
-            if (block.chainid == 80094 || block.chainid == 80084) {
-                // defaults for Berachain maker: 2bps / taker: 5bps
-                userFeeRates = FeeRates(
-                    200_000_000_000_000,
-                    500_000_000_000_000,
-                    1
-                );
-            } else {
-                userFeeRates = FeeRates(0, 200_000_000_000_000, 1);
-            }
-        }
+        FeeRates memory userFeeRates = _getUserFeeRates(subaccount, productId);
         return taker ? userFeeRates.takerRateX18 : userFeeRates.makerRateX18;
     }
 
@@ -952,13 +937,37 @@ contract OffchainExchange is
         view
         returns (int128, int128)
     {
+        FeeRates memory userFeeRates = _getUserFeeRates(subaccount, productId);
+        return (userFeeRates.takerRateX18, userFeeRates.makerRateX18);
+    }
+
+    function _getUserFeeRates(bytes32 subaccount, uint32 productId)
+        private
+        view
+        returns (FeeRates memory)
+    {
         FeeRates memory userFeeRates = feeRates[
             address(uint160(bytes20(subaccount)))
         ][productId];
-        if (userFeeRates.isNonDefault == 0) {
-            // use the default fee rates.
+
+        uint96 subName = uint96((uint256(subaccount) << 160) >> 160);
+
+        if ((subName & MASK_6_BYTES) == 0x666F78696679000000000000) {
+            // defaults for "foxify". maker: 0bps / taker: 7.5bps
+            userFeeRates = FeeRates(0, 750_000_000_000_000, 1);
+        } else if ((subName & MASK_6_BYTES) == 0x66756E646564000000000000) {
+            // defaults for "funded". maker: 7.5bps / taker: 7.5bps
+            userFeeRates = FeeRates(
+                750_000_000_000_000,
+                750_000_000_000_000,
+                1
+            );
+        } else if ((subName & MASK_6_BYTES) == 0x706572706965000000000000) {
+            // defaults for "perpie". maker: 0bps / taker: 4bps
+            userFeeRates = FeeRates(0, 400_000_000_000_000, 1);
+        } else if (userFeeRates.isNonDefault == 0) {
             if (block.chainid == 80094 || block.chainid == 80084) {
-                // defaults for Berachain maker: 2bps / taker: 5bps
+                // defaults for Berachain. maker: 2bps / taker: 5bps
                 userFeeRates = FeeRates(
                     200_000_000_000_000,
                     500_000_000_000_000,
@@ -968,7 +977,8 @@ contract OffchainExchange is
                 userFeeRates = FeeRates(0, 200_000_000_000_000, 1);
             }
         }
-        return (userFeeRates.takerRateX18, userFeeRates.makerRateX18);
+
+        return userFeeRates;
     }
 
     function updateFeeRates(
