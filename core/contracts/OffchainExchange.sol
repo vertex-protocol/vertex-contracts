@@ -946,6 +946,9 @@ contract OffchainExchange is
         view
         returns (FeeRates memory)
     {
+        if (RiskHelper.isIsolatedSubaccount(subaccount)) {
+            subaccount = parentSubaccounts[subaccount];
+        }
         FeeRates memory userFeeRates = feeRates[
             address(uint160(bytes20(subaccount)))
         ][productId];
