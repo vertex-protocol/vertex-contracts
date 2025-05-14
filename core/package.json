@@ -1,6 +1,6 @@
 {
   "name": "vertex-core",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "license": "UNLICENSED",
   "description": "EVM implementation of Vertex",
   "scripts": {
